@@ -1,0 +1,19 @@
+#To initiate a venv terminal we need to use the following commands
+
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+.\venv\Scripts\Activate.ps1
+
+#Step — Test the server:
+powershelluvicorn src.api.main:app --reload --port 8000
+
+- Open your browser and go to:
+
+http://localhost:8000 — should show app info JSON
+http://localhost:8000/health — should show {"status": "healthy"}
+http://localhost:8000/docs — should show Swagger UI (interactive API docs)
+
+Press Ctrl+C in the terminal to stop the server.
+
+
+#
