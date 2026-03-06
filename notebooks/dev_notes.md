@@ -23,5 +23,3 @@ Don't code along yet — just understand the flow:
 4. ChromaDB quickstart (15 min) — Where your vectors will live.
 
 >Read: docs.trychroma.com/docs/overview/getting-started
-
-## Day 2 Notes:
