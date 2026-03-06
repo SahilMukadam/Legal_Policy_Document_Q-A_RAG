@@ -1,3 +1,6 @@
+#Gemini-api key
+https://aistudio.google.com/api-keys?project=gen-lang-client-0134199519
+
 #To initiate a venv terminal we need to use the following commands
 
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
