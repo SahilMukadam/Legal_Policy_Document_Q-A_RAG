@@ -5,25 +5,26 @@ Main FastAPI entry point.
 Run with: uvicorn src.api.main:app --reload --port 8000
 """
 
-import os
 import shutil
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from src.ingestion.parser import DocumentParser
 from src.ingestion.chunker import TextChunker
+from src.retrieval.vector_store import VectorStore
 
 app = FastAPI(
     title="Legal Document Q&A",
     description="RAG-powered Q&A system for legal and policy documents. "
                 "Upload contracts, policies, or terms of service and ask questions "
                 "to get cited answers from the source text.",
-    version="0.1.0",
+    version="0.2.0",
 )
 
-# CORS — allow all origins in development
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,18 +36,29 @@ app.add_middleware(
 # Initialize components
 parser = DocumentParser()
 chunker = TextChunker()
+vector_store = VectorStore()
 
 # Upload directory
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
+# --- Request/Response Models ---
+
+class SearchRequest(BaseModel):
+    """Request body for the search endpoint."""
+    query: str
+    k: int = 5
+
+
+# --- Endpoints ---
+
 @app.get("/")
 async def root():
     """Root endpoint — basic info."""
     return {
         "app": "Legal Document Q&A (RAG)",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "status": "running",
         "docs": "/docs",
     }
@@ -55,12 +67,14 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint for monitoring."""
+    stats = vector_store.get_stats()
     return {
         "status": "healthy",
         "components": {
             "api": "up",
-            "vector_store": "not_initialized",
-            "llm": "not_initialized",
+            "vector_store": "up",
+            "total_chunks_stored": stats["total_chunks"],
+            "embedding_model": stats["embedding_model"],
         },
     }
 
@@ -70,12 +84,8 @@ async def upload_document(file: UploadFile = File(...)):
     """
     Upload a legal document for processing.
 
-    Accepts PDF, DOCX, or TXT files. The document is:
-    1. Saved to the upload directory
-    2. Parsed to extract text
-    3. Chunked into smaller passages for retrieval
-
-    Returns the number of chunks created and a preview.
+    The document is parsed, chunked, embedded, and stored in the
+    vector database for later retrieval.
     """
     # Validate file extension
     file_ext = Path(file.filename).suffix.lower()
@@ -98,23 +108,60 @@ async def upload_document(file: UploadFile = File(...)):
     try:
         documents = parser.parse(str(file_path))
     except ValueError as e:
-        # Clean up the saved file if parsing fails
         file_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(e))
 
     # Chunk the documents
     chunks = chunker.chunk(documents)
 
+    # Store in vector database
+    num_stored = vector_store.add_chunks(chunks, doc_id=file.filename)
+
     return {
         "filename": file.filename,
         "pages_extracted": len(documents),
         "chunks_created": len(chunks),
-        "chunk_preview": [
-            {
-                "text": chunk["text"][:200] + "..." if len(chunk["text"]) > 200 else chunk["text"],
-                "metadata": chunk["metadata"],
-            }
-            for chunk in chunks[:3]  # Show first 3 chunks as preview
-        ],
-        "message": f"Successfully processed '{file.filename}' into {len(chunks)} chunks.",
+        "chunks_stored": num_stored,
+        "message": f"Successfully processed and stored '{file.filename}' "
+                   f"({num_stored} chunks in vector DB).",
     }
+
+
+@app.post("/search")
+async def search_documents(request: SearchRequest):
+    """
+    Search uploaded documents using semantic search.
+
+    Send a natural language query and get the most relevant
+    document chunks back, ranked by similarity.
+    """
+    if not request.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty.")
+
+    stats = vector_store.get_stats()
+    if stats["total_chunks"] == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="No documents uploaded yet. Upload a document first via /upload.",
+        )
+
+    results = vector_store.search(query=request.query, k=request.k)
+
+    return {
+        "query": request.query,
+        "num_results": len(results),
+        "results": results,
+    }
+
+
+@app.get("/stats")
+async def get_stats():
+    """Get vector store statistics."""
+    return vector_store.get_stats()
+
+
+@app.delete("/reset")
+async def reset_database():
+    """Delete all stored documents. Use with caution."""
+    vector_store.delete_collection()
+    return {"message": "Vector store cleared. All documents deleted."}

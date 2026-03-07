@@ -1,3 +1,8 @@
+
+## additional features
+
+in week 3 we will ask claude to add many more extension formats to read
+ 
 ## Day 1 Notes:
 
 Read these today (in this order, ~1.5 hours total):
