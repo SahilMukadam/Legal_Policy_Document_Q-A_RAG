@@ -15,13 +15,14 @@ from pydantic import BaseModel
 from src.ingestion.parser import DocumentParser
 from src.ingestion.chunker import TextChunker
 from src.retrieval.vector_store import VectorStore
+from src.chains.rag_chain import RAGChain
 
 app = FastAPI(
     title="Legal Document Q&A",
     description="RAG-powered Q&A system for legal and policy documents. "
                 "Upload contracts, policies, or terms of service and ask questions "
                 "to get cited answers from the source text.",
-    version="0.2.0",
+    version="0.3.0",
 )
 
 # CORS
@@ -37,6 +38,7 @@ app.add_middleware(
 parser = DocumentParser()
 chunker = TextChunker()
 vector_store = VectorStore()
+rag_chain = RAGChain()
 
 # Upload directory
 UPLOAD_DIR = Path("data/uploads")
@@ -51,6 +53,12 @@ class SearchRequest(BaseModel):
     k: int = 5
 
 
+class AskRequest(BaseModel):
+    """Request body for the ask endpoint."""
+    question: str
+    k: int = 5
+
+
 # --- Endpoints ---
 
 @app.get("/")
@@ -58,7 +66,7 @@ async def root():
     """Root endpoint — basic info."""
     return {
         "app": "Legal Document Q&A (RAG)",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "status": "running",
         "docs": "/docs",
     }
@@ -73,6 +81,7 @@ async def health_check():
         "components": {
             "api": "up",
             "vector_store": "up",
+            "llm": "up",
             "total_chunks_stored": stats["total_chunks"],
             "embedding_model": stats["embedding_model"],
         },
@@ -152,6 +161,34 @@ async def search_documents(request: SearchRequest):
         "num_results": len(results),
         "results": results,
     }
+
+
+@app.post("/ask")
+async def ask_question(request: AskRequest):
+    """
+    Ask a question about uploaded legal documents.
+
+    This is the main RAG endpoint. It:
+    1. Searches for relevant document passages
+    2. Sends them as context to the LLM
+    3. Returns an answer with source citations
+
+    Example request:
+        {"question": "When is rent due?", "k": 5}
+    """
+    if not request.question.strip():
+        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+
+    stats = vector_store.get_stats()
+    if stats["total_chunks"] == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="No documents uploaded yet. Upload a document first via /upload.",
+        )
+
+    result = rag_chain.ask(question=request.question, k=request.k)
+
+    return result
 
 
 @app.get("/stats")

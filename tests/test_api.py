@@ -71,7 +71,6 @@ def test_upload_unsupported_file():
 
 def test_search_after_upload():
     """Test searching after uploading a document."""
-    # First upload a document
     content = (
         "LEASE AGREEMENT\n\n"
         "The tenant shall pay monthly rent of 1500 pounds by the first "
@@ -85,7 +84,6 @@ def test_search_after_upload():
         files={"file": ("lease.txt", file, "text/plain")},
     )
 
-    # Now search
     response = client.post(
         "/search",
         json={"query": "When is rent due?", "k": 3},
@@ -96,7 +94,6 @@ def test_search_after_upload():
     assert data["query"] == "When is rent due?"
     assert data["num_results"] >= 1
     assert len(data["results"]) >= 1
-    # Each result should have text, metadata, and score
     assert "text" in data["results"][0]
     assert "metadata" in data["results"][0]
     assert "score" in data["results"][0]
@@ -107,6 +104,15 @@ def test_search_empty_query():
     response = client.post(
         "/search",
         json={"query": "", "k": 5},
+    )
+    assert response.status_code == 400
+
+
+def test_ask_empty_question():
+    """Test that empty questions are rejected."""
+    response = client.post(
+        "/ask",
+        json={"question": "", "k": 5},
     )
     assert response.status_code == 400
 
