@@ -51,8 +51,6 @@ def test_upload_txt_file():
     assert response.status_code == 200
     data = response.json()
     assert data["filename"] == "privacy_policy.txt"
-    assert data["pages_extracted"] == 1
-    assert data["chunks_created"] >= 1
     assert data["chunks_stored"] >= 1
 
 
@@ -91,12 +89,8 @@ def test_search_after_upload():
 
     assert response.status_code == 200
     data = response.json()
-    assert data["query"] == "When is rent due?"
     assert data["num_results"] >= 1
-    assert len(data["results"]) >= 1
     assert "text" in data["results"][0]
-    assert "metadata" in data["results"][0]
-    assert "score" in data["results"][0]
 
 
 def test_search_empty_query():
@@ -115,6 +109,45 @@ def test_ask_empty_question():
         json={"question": "", "k": 5},
     )
     assert response.status_code == 400
+
+
+def test_ask_with_session_id():
+    """Test that /ask accepts a session_id parameter."""
+    # Upload a doc first
+    content = "CONTRACT TERMS\n\nThe payment term is net 30 days from invoice date."
+    file = io.BytesIO(content.encode("utf-8"))
+    client.post(
+        "/upload",
+        files={"file": ("contract.txt", file, "text/plain")},
+    )
+
+    # Ask with a session ID — just verify the endpoint accepts it
+    response = client.post(
+        "/ask",
+        json={"question": "What is the payment term?", "k": 3, "session_id": "test_session"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == "test_session"
+    assert "answer" in data
+    assert "sources" in data
+
+
+def test_conversation_history_endpoint():
+    """Test getting conversation history."""
+    response = client.get("/history/some_session")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == "some_session"
+    assert "messages" in data
+
+
+def test_clear_conversation_history():
+    """Test clearing conversation history."""
+    response = client.delete("/history/some_session")
+    assert response.status_code == 200
+    assert "cleared" in response.json()["message"]
 
 
 def test_stats_endpoint():

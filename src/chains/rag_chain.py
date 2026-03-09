@@ -1,25 +1,26 @@
 """
-RAG Chain Module.
+RAG Chain Module with Conversation Memory.
 
-The core of the application — connects retrieval (vector search) to the LLM
-(Gemini/Claude) to answer questions about legal documents with citations.
+Connects retrieval (vector search) to the LLM (Gemini/Claude) to answer
+questions about legal documents with citations. Now supports multi-turn
+conversations — users can ask follow-up questions and the system remembers
+the context.
 
-How it works:
-    1. User asks: "When is rent due?"
-    2. We search the vector store for relevant chunks
-    3. We build a prompt with the chunks as context
-    4. We send the prompt to the LLM
-    5. The LLM answers using ONLY the provided context
-    6. We return the answer + source citations
+How conversation memory works:
+    User: "When is rent due?"       → Full RAG pipeline runs
+    User: "What if I pay late?"     → System knows "late" refers to rent
+    User: "How much is the penalty?" → System knows we're still talking about rent/late fees
 
 Usage:
     from src.chains.rag_chain import RAGChain
 
     chain = RAGChain()
-    result = chain.ask("When is rent due?")
-    # Returns: {"answer": "...", "sources": [...], "query": "..."}
+    r1 = chain.ask("When is rent due?", session_id="user123")
+    r2 = chain.ask("What about late payments?", session_id="user123")  # Remembers context
+    chain.clear_memory("user123")  # Clear when done
 """
 
+import time
 from src.retrieval.vector_store import VectorStore
 from src.llm_provider import get_llm
 
@@ -37,6 +38,8 @@ RULES:
 4. Keep answers clear, concise, and professional.
 5. If multiple context passages are relevant, synthesize them into one coherent answer.
 6. Quote specific phrases from the documents when relevant, using quotation marks.
+7. If the user asks a follow-up question, use the conversation history 
+   to understand what they're referring to.
 """
 
 QUERY_TEMPLATE = """Context passages from uploaded legal documents:
@@ -45,29 +48,62 @@ QUERY_TEMPLATE = """Context passages from uploaded legal documents:
 
 ---
 
-Question: {question}
+{history_section}
+
+Current Question: {question}
 
 Provide a clear answer based on the context above, with source citations."""
 
 
 class RAGChain:
-    """Retrieval-Augmented Generation chain for legal document Q&A."""
+    """Retrieval-Augmented Generation chain with conversation memory."""
 
     def __init__(self):
-        """Initialize the RAG chain with vector store and LLM."""
+        """Initialize the RAG chain with vector store, LLM, and memory."""
         self.vector_store = VectorStore()
         self.llm = get_llm()
 
+        # In-memory conversation storage: {session_id: [messages]}
+        # Each message is {"role": "user"|"assistant", "content": "..."}
+        self._memory: dict[str, list[dict]] = {}
+
+    def _get_history(self, session_id: str) -> list[dict]:
+        """Get conversation history for a session."""
+        return self._memory.get(session_id, [])
+
+    def _add_to_memory(self, session_id: str, role: str, content: str):
+        """Add a message to conversation history."""
+        if session_id not in self._memory:
+            self._memory[session_id] = []
+
+        self._memory[session_id].append({
+            "role": role,
+            "content": content,
+        })
+
+        # Keep only last 10 exchanges (20 messages) to avoid token overflow
+        if len(self._memory[session_id]) > 20:
+            self._memory[session_id] = self._memory[session_id][-20:]
+
+    def _format_history(self, session_id: str) -> str:
+        """Format conversation history for the prompt."""
+        history = self._get_history(session_id)
+        if not history:
+            return ""
+
+        parts = ["Previous conversation:"]
+        for msg in history:
+            prefix = "User" if msg["role"] == "user" else "Assistant"
+            # Truncate long assistant responses in history
+            content = msg["content"]
+            if msg["role"] == "assistant" and len(content) > 300:
+                content = content[:300] + "..."
+            parts.append(f"{prefix}: {content}")
+
+        return "\n".join(parts)
+
     def _format_context(self, results: list[dict]) -> str:
-        """
-        Format retrieved chunks into a context string for the LLM prompt.
-
-        Args:
-            results: Search results from VectorStore.search()
-
-        Returns:
-            Formatted string with numbered passages and metadata.
-        """
+        """Format retrieved chunks into a context string for the LLM prompt."""
         context_parts = []
         for i, result in enumerate(results, start=1):
             source = result["metadata"].get("source", "Unknown")
@@ -82,15 +118,7 @@ class RAGChain:
         return "\n\n".join(context_parts)
 
     def _extract_sources(self, results: list[dict]) -> list[dict]:
-        """
-        Extract source information from search results for citation.
-
-        Args:
-            results: Search results from VectorStore.search()
-
-        Returns:
-            List of source dicts with filename, page, score, and text preview.
-        """
+        """Extract source information from search results for citation."""
         sources = []
         for result in results:
             sources.append({
@@ -104,13 +132,39 @@ class RAGChain:
             })
         return sources
 
-    def ask(self, question: str, k: int = 5) -> dict:
+    def _build_search_query(self, question: str, session_id: str) -> str:
+        """
+        Enhance the search query using conversation history.
+
+        If the user asks "What about late payments?" after asking about rent,
+        we search for "rent late payments" to get better results.
+        """
+        history = self._get_history(session_id)
+        if not history:
+            return question
+
+        # Get the last user question for context
+        last_user_msgs = [m for m in history if m["role"] == "user"]
+        if last_user_msgs:
+            last_question = last_user_msgs[-1]["content"]
+            # Combine last question with current for better retrieval
+            return f"{last_question} {question}"
+
+        return question
+
+    def ask(
+        self,
+        question: str,
+        k: int = 5,
+        session_id: str = "default",
+    ) -> dict:
         """
         Ask a question about the uploaded documents.
 
         Args:
             question: Natural language question.
             k: Number of context chunks to retrieve.
+            session_id: Conversation session ID for memory.
 
         Returns:
             Dict with:
@@ -118,9 +172,11 @@ class RAGChain:
                 - "sources": List of source passages used
                 - "query": The original question
                 - "num_sources": How many passages were retrieved
+                - "session_id": The conversation session ID
         """
-        # Step 1: Retrieve relevant chunks
-        results = self.vector_store.search(query=question, k=k)
+        # Step 1: Retrieve relevant chunks (enhanced with history)
+        search_query = self._build_search_query(question, session_id)
+        results = self.vector_store.search(query=search_query, k=k)
 
         if not results:
             return {
@@ -129,26 +185,45 @@ class RAGChain:
                 "sources": [],
                 "query": question,
                 "num_sources": 0,
+                "session_id": session_id,
             }
 
-        # Step 2: Format context from retrieved chunks
+        # Step 2: Format context and history
         context = self._format_context(results)
+        history_text = self._format_history(session_id)
+        history_section = history_text if history_text else "No previous conversation."
 
         # Step 3: Build the prompt
         user_message = QUERY_TEMPLATE.format(
             context=context,
+            history_section=history_section,
             question=question,
         )
 
-        # Step 4: Call the LLM
+        # Step 4: Call the LLM (with retry for rate limits)
         messages = [
             ("system", SYSTEM_PROMPT),
             ("human", user_message),
         ]
 
-        response = self.llm.invoke(messages)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.llm.invoke(messages)
+                break
+            except Exception as e:
+                if "429" in str(e) and attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 35
+                    print(f"Rate limited. Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                else:
+                    raise
 
-        # Step 5: Extract sources for citation
+        # Step 5: Store in memory
+        self._add_to_memory(session_id, "user", question)
+        self._add_to_memory(session_id, "assistant", response.content)
+
+        # Step 6: Extract sources
         sources = self._extract_sources(results)
 
         return {
@@ -156,4 +231,14 @@ class RAGChain:
             "sources": sources,
             "query": question,
             "num_sources": len(sources),
+            "session_id": session_id,
         }
+
+    def clear_memory(self, session_id: str = "default"):
+        """Clear conversation history for a session."""
+        if session_id in self._memory:
+            del self._memory[session_id]
+
+    def get_memory(self, session_id: str = "default") -> list[dict]:
+        """Get conversation history for a session."""
+        return self._get_history(session_id)

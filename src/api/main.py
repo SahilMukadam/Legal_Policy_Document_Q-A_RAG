@@ -21,8 +21,9 @@ app = FastAPI(
     title="Legal Document Q&A",
     description="RAG-powered Q&A system for legal and policy documents. "
                 "Upload contracts, policies, or terms of service and ask questions "
-                "to get cited answers from the source text.",
-    version="0.3.0",
+                "to get cited answers from the source text. Supports multi-turn "
+                "conversations with follow-up questions.",
+    version="0.4.0",
 )
 
 # CORS
@@ -57,6 +58,7 @@ class AskRequest(BaseModel):
     """Request body for the ask endpoint."""
     question: str
     k: int = 5
+    session_id: str = "default"
 
 
 # --- Endpoints ---
@@ -66,7 +68,7 @@ async def root():
     """Root endpoint — basic info."""
     return {
         "app": "Legal Document Q&A (RAG)",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "status": "running",
         "docs": "/docs",
     }
@@ -96,7 +98,6 @@ async def upload_document(file: UploadFile = File(...)):
     The document is parsed, chunked, embedded, and stored in the
     vector database for later retrieval.
     """
-    # Validate file extension
     file_ext = Path(file.filename).suffix.lower()
     if file_ext not in DocumentParser.SUPPORTED_EXTENSIONS:
         raise HTTPException(
@@ -105,7 +106,6 @@ async def upload_document(file: UploadFile = File(...)):
                    f"Supported: {list(DocumentParser.SUPPORTED_EXTENSIONS)}",
         )
 
-    # Save uploaded file
     file_path = UPLOAD_DIR / file.filename
     try:
         with open(file_path, "wb") as buffer:
@@ -113,17 +113,13 @@ async def upload_document(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
 
-    # Parse the document
     try:
         documents = parser.parse(str(file_path))
     except ValueError as e:
         file_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Chunk the documents
     chunks = chunker.chunk(documents)
-
-    # Store in vector database
     num_stored = vector_store.add_chunks(chunks, doc_id=file.filename)
 
     return {
@@ -140,9 +136,6 @@ async def upload_document(file: UploadFile = File(...)):
 async def search_documents(request: SearchRequest):
     """
     Search uploaded documents using semantic search.
-
-    Send a natural language query and get the most relevant
-    document chunks back, ranked by similarity.
     """
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
@@ -168,13 +161,14 @@ async def ask_question(request: AskRequest):
     """
     Ask a question about uploaded legal documents.
 
-    This is the main RAG endpoint. It:
-    1. Searches for relevant document passages
-    2. Sends them as context to the LLM
-    3. Returns an answer with source citations
+    Supports multi-turn conversations via session_id. Use the same
+    session_id across requests to enable follow-up questions.
 
-    Example request:
-        {"question": "When is rent due?", "k": 5}
+    Example first question:
+        {"question": "When is rent due?", "session_id": "user1"}
+
+    Example follow-up:
+        {"question": "What if I pay late?", "session_id": "user1"}
     """
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
@@ -186,9 +180,36 @@ async def ask_question(request: AskRequest):
             detail="No documents uploaded yet. Upload a document first via /upload.",
         )
 
-    result = rag_chain.ask(question=request.question, k=request.k)
+    result = rag_chain.ask(
+        question=request.question,
+        k=request.k,
+        session_id=request.session_id,
+    )
 
     return result
+
+
+@app.get("/history/{session_id}")
+async def get_conversation_history(session_id: str):
+    """
+    Get conversation history for a session.
+    Useful for displaying chat history in a frontend.
+    """
+    history = rag_chain.get_memory(session_id)
+    return {
+        "session_id": session_id,
+        "num_messages": len(history),
+        "messages": history,
+    }
+
+
+@app.delete("/history/{session_id}")
+async def clear_conversation_history(session_id: str):
+    """Clear conversation history for a session."""
+    rag_chain.clear_memory(session_id)
+    return {
+        "message": f"Conversation history cleared for session '{session_id}'.",
+    }
 
 
 @app.get("/stats")
