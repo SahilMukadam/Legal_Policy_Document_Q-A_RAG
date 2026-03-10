@@ -1,23 +1,18 @@
 """
-RAG Chain Module with Conversation Memory.
+RAG Chain Module with Conversation Memory and Source Filtering.
 
 Connects retrieval (vector search) to the LLM (Gemini/Claude) to answer
-questions about legal documents with citations. Now supports multi-turn
-conversations — users can ask follow-up questions and the system remembers
-the context.
-
-How conversation memory works:
-    User: "When is rent due?"       → Full RAG pipeline runs
-    User: "What if I pay late?"     → System knows "late" refers to rent
-    User: "How much is the penalty?" → System knows we're still talking about rent/late fees
+questions about legal documents with citations. Supports:
+    - Multi-turn conversations (follow-up questions)
+    - Source filtering (restrict answers to specific documents)
 
 Usage:
     from src.chains.rag_chain import RAGChain
 
     chain = RAGChain()
-    r1 = chain.ask("When is rent due?", session_id="user123")
-    r2 = chain.ask("What about late payments?", session_id="user123")  # Remembers context
-    chain.clear_memory("user123")  # Clear when done
+    r1 = chain.ask("When is rent due?", session_id="user1")
+    r2 = chain.ask("What about late fees?", session_id="user1")
+    r3 = chain.ask("Summarize this", source_filter="lease.pdf")
 """
 
 import time
@@ -25,7 +20,6 @@ from src.retrieval.vector_store import VectorStore
 from src.llm_provider import get_llm
 
 
-# System prompt that instructs the LLM how to behave
 SYSTEM_PROMPT = """You are a precise legal document assistant. Your job is to answer 
 questions about legal documents using ONLY the provided context passages.
 
@@ -56,23 +50,17 @@ Provide a clear answer based on the context above, with source citations."""
 
 
 class RAGChain:
-    """Retrieval-Augmented Generation chain with conversation memory."""
+    """Retrieval-Augmented Generation chain with memory and source filtering."""
 
     def __init__(self):
-        """Initialize the RAG chain with vector store, LLM, and memory."""
         self.vector_store = VectorStore()
         self.llm = get_llm()
-
-        # In-memory conversation storage: {session_id: [messages]}
-        # Each message is {"role": "user"|"assistant", "content": "..."}
         self._memory: dict[str, list[dict]] = {}
 
     def _get_history(self, session_id: str) -> list[dict]:
-        """Get conversation history for a session."""
         return self._memory.get(session_id, [])
 
     def _add_to_memory(self, session_id: str, role: str, content: str):
-        """Add a message to conversation history."""
         if session_id not in self._memory:
             self._memory[session_id] = []
 
@@ -81,12 +69,10 @@ class RAGChain:
             "content": content,
         })
 
-        # Keep only last 10 exchanges (20 messages) to avoid token overflow
         if len(self._memory[session_id]) > 20:
             self._memory[session_id] = self._memory[session_id][-20:]
 
     def _format_history(self, session_id: str) -> str:
-        """Format conversation history for the prompt."""
         history = self._get_history(session_id)
         if not history:
             return ""
@@ -94,7 +80,6 @@ class RAGChain:
         parts = ["Previous conversation:"]
         for msg in history:
             prefix = "User" if msg["role"] == "user" else "Assistant"
-            # Truncate long assistant responses in history
             content = msg["content"]
             if msg["role"] == "assistant" and len(content) > 300:
                 content = content[:300] + "..."
@@ -103,7 +88,6 @@ class RAGChain:
         return "\n".join(parts)
 
     def _format_context(self, results: list[dict]) -> str:
-        """Format retrieved chunks into a context string for the LLM prompt."""
         context_parts = []
         for i, result in enumerate(results, start=1):
             source = result["metadata"].get("source", "Unknown")
@@ -118,7 +102,6 @@ class RAGChain:
         return "\n\n".join(context_parts)
 
     def _extract_sources(self, results: list[dict]) -> list[dict]:
-        """Extract source information from search results for citation."""
         sources = []
         for result in results:
             sources.append({
@@ -133,21 +116,13 @@ class RAGChain:
         return sources
 
     def _build_search_query(self, question: str, session_id: str) -> str:
-        """
-        Enhance the search query using conversation history.
-
-        If the user asks "What about late payments?" after asking about rent,
-        we search for "rent late payments" to get better results.
-        """
         history = self._get_history(session_id)
         if not history:
             return question
 
-        # Get the last user question for context
         last_user_msgs = [m for m in history if m["role"] == "user"]
         if last_user_msgs:
             last_question = last_user_msgs[-1]["content"]
-            # Combine last question with current for better retrieval
             return f"{last_question} {question}"
 
         return question
@@ -157,6 +132,7 @@ class RAGChain:
         question: str,
         k: int = 5,
         session_id: str = "default",
+        source_filter: str | None = None,
     ) -> dict:
         """
         Ask a question about the uploaded documents.
@@ -165,27 +141,29 @@ class RAGChain:
             question: Natural language question.
             k: Number of context chunks to retrieve.
             session_id: Conversation session ID for memory.
+            source_filter: Optional filename to restrict to one document.
 
         Returns:
-            Dict with:
-                - "answer": The LLM's answer with citations
-                - "sources": List of source passages used
-                - "query": The original question
-                - "num_sources": How many passages were retrieved
-                - "session_id": The conversation session ID
+            Dict with answer, sources, query, session_id, and source_filter.
         """
-        # Step 1: Retrieve relevant chunks (enhanced with history)
+        # Step 1: Retrieve relevant chunks
         search_query = self._build_search_query(question, session_id)
-        results = self.vector_store.search(query=search_query, k=k)
+        results = self.vector_store.search(
+            query=search_query,
+            k=k,
+            source_filter=source_filter,
+        )
 
         if not results:
+            msg = "No documents have been uploaded yet." if not source_filter else \
+                  f"No relevant content found in '{source_filter}'."
             return {
-                "answer": "No documents have been uploaded yet. "
-                          "Please upload a legal document first.",
+                "answer": msg + " Please upload a legal document first.",
                 "sources": [],
                 "query": question,
                 "num_sources": 0,
                 "session_id": session_id,
+                "source_filter": source_filter,
             }
 
         # Step 2: Format context and history
@@ -223,7 +201,7 @@ class RAGChain:
         self._add_to_memory(session_id, "user", question)
         self._add_to_memory(session_id, "assistant", response.content)
 
-        # Step 6: Extract sources
+        # Step 6: Return result
         sources = self._extract_sources(results)
 
         return {
@@ -232,13 +210,12 @@ class RAGChain:
             "query": question,
             "num_sources": len(sources),
             "session_id": session_id,
+            "source_filter": source_filter,
         }
 
     def clear_memory(self, session_id: str = "default"):
-        """Clear conversation history for a session."""
         if session_id in self._memory:
             del self._memory[session_id]
 
     def get_memory(self, session_id: str = "default") -> list[dict]:
-        """Get conversation history for a session."""
         return self._get_history(session_id)
