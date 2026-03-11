@@ -2,20 +2,16 @@
 Vector Store Module.
 
 Manages document storage and retrieval using ChromaDB.
-Now supports:
-    - Metadata filtering (search within specific documents)
-    - Document listing (see all uploaded documents)
-    - Document deletion (remove a single document's chunks)
-    - Duplicate detection (prevent re-uploading same file)
+Supports:
+    - Collections (folders) for organizing documents
+    - Multi-source filtering (search across selected files/collections)
+    - Document and collection management
 
 Usage:
-    from src.retrieval.vector_store import VectorStore
-
     store = VectorStore()
-    store.add_chunks(chunks)
-    results = store.search("rent due", k=5, source_filter="lease.pdf")
-    docs = store.list_documents()
-    store.delete_document("old_contract.pdf")
+    store.add_chunks(chunks, doc_id="lease.pdf", collection="Real Estate")
+    results = store.search("rent", source_filters=["lease.pdf", "addendum.pdf"])
+    collections = store.list_collections()
 """
 
 import chromadb
@@ -26,10 +22,9 @@ from src.embeddings.embedding_service import EmbeddingService
 
 
 class VectorStore:
-    """ChromaDB-backed vector store with metadata filtering."""
+    """ChromaDB-backed vector store with collections and multi-filter search."""
 
     def __init__(self):
-        """Initialize ChromaDB client and embedding service."""
         self.embedding_service = EmbeddingService()
 
         self.client = chromadb.PersistentClient(
@@ -42,13 +37,19 @@ class VectorStore:
             metadata={"hnsw:space": "cosine"},
         )
 
-    def add_chunks(self, chunks: list[dict], doc_id: str | None = None) -> int:
+    def add_chunks(
+        self,
+        chunks: list[dict],
+        doc_id: str | None = None,
+        collection_name: str = "General",
+    ) -> int:
         """
         Add document chunks to the vector store.
 
         Args:
             chunks: List of chunk dicts from TextChunker.
-            doc_id: Optional document identifier prefix for chunk IDs.
+            doc_id: Document identifier prefix for chunk IDs.
+            collection_name: Collection/folder this document belongs to.
 
         Returns:
             Number of chunks added.
@@ -72,6 +73,9 @@ class VectorStore:
                     metadata[key] = value
                 else:
                     metadata[key] = str(value)
+
+            # Add collection metadata
+            metadata["collection"] = collection_name
             metadatas.append(metadata)
 
         self.collection.add(
@@ -87,7 +91,7 @@ class VectorStore:
         self,
         query: str,
         k: int | None = None,
-        source_filter: str | None = None,
+        source_filters: list[str] | None = None,
     ) -> list[dict]:
         """
         Search for chunks most relevant to the query.
@@ -95,8 +99,8 @@ class VectorStore:
         Args:
             query: Natural language question or search text.
             k: Number of results to return.
-            source_filter: Optional filename to restrict search to a
-                          specific document (e.g., "lease.pdf").
+            source_filters: Optional list of filenames to restrict search.
+                           Pass specific filenames to filter.
 
         Returns:
             List of result dicts with text, metadata, and similarity score.
@@ -109,10 +113,12 @@ class VectorStore:
 
         query_embedding = self.embedding_service.embed_single(query)
 
-        # Build optional metadata filter
+        # Build metadata filter
         where_filter = None
-        if source_filter:
-            where_filter = {"source": source_filter}
+        if source_filters and len(source_filters) == 1:
+            where_filter = {"source": source_filters[0]}
+        elif source_filters and len(source_filters) > 1:
+            where_filter = {"source": {"$in": source_filters}}
 
         results = self.collection.query(
             query_embeddings=[query_embedding],
@@ -131,63 +137,110 @@ class VectorStore:
 
         return formatted
 
-    def list_documents(self) -> list[dict]:
+    def list_collections(self) -> dict[str, list[dict]]:
         """
-        List all uploaded documents with their chunk counts.
+        List all collections with their documents.
 
         Returns:
-            List of dicts with source filename and number of chunks.
+            Dict mapping collection names to lists of document info:
+            {
+                "Real Estate": [
+                    {"source": "lease.pdf", "chunks": 5, "pages": 3},
+                    {"source": "addendum.pdf", "chunks": 2, "pages": 1},
+                ],
+                "Employment": [...]
+            }
         """
         if self.collection.count() == 0:
-            return []
+            return {}
 
-        # Get all metadata to find unique sources
         all_data = self.collection.get(include=["metadatas"])
 
-        doc_counts: dict[str, dict] = {}
+        # Build nested structure: collection → source → stats
+        tree: dict[str, dict[str, dict]] = {}
         for metadata in all_data["metadatas"]:
+            coll = metadata.get("collection", "General")
             source = metadata.get("source", "Unknown")
-            if source not in doc_counts:
-                doc_counts[source] = {
-                    "source": source,
-                    "chunks": 0,
-                    "pages": set(),
-                }
-            doc_counts[source]["chunks"] += 1
+
+            if coll not in tree:
+                tree[coll] = {}
+            if source not in tree[coll]:
+                tree[coll][source] = {"source": source, "chunks": 0, "pages": set()}
+
+            tree[coll][source]["chunks"] += 1
             page = metadata.get("page")
             if page is not None:
-                doc_counts[source]["pages"].add(page)
+                tree[coll][source]["pages"].add(page)
 
-        # Convert sets to counts for JSON serialization
+        # Convert sets to counts
+        result = {}
+        for coll_name, docs in sorted(tree.items()):
+            result[coll_name] = []
+            for doc_info in sorted(docs.values(), key=lambda d: d["source"]):
+                result[coll_name].append({
+                    "source": doc_info["source"],
+                    "chunks": doc_info["chunks"],
+                    "pages": len(doc_info["pages"]),
+                })
+
+        return result
+
+    def list_documents(self) -> list[dict]:
+        """List all documents as a flat list (backward compatible)."""
+        collections = self.list_collections()
         documents = []
-        for doc_info in doc_counts.values():
-            documents.append({
-                "source": doc_info["source"],
-                "chunks": doc_info["chunks"],
-                "pages": len(doc_info["pages"]),
-            })
-
+        for coll_name, docs in collections.items():
+            for doc in docs:
+                documents.append({
+                    **doc,
+                    "collection": coll_name,
+                })
         return sorted(documents, key=lambda d: d["source"])
 
-    def delete_document(self, source: str) -> int:
+    def get_sources_for_collections(self, collection_names: list[str]) -> list[str]:
         """
-        Delete all chunks belonging to a specific document.
+        Get all source filenames belonging to the given collections.
 
         Args:
-            source: The filename of the document to delete.
+            collection_names: List of collection names.
 
         Returns:
-            Number of chunks deleted.
+            List of source filenames.
         """
+        collections = self.list_collections()
+        sources = []
+        for coll_name in collection_names:
+            if coll_name in collections:
+                sources.extend([doc["source"] for doc in collections[coll_name]])
+        return sources
+
+    def delete_document(self, source: str) -> int:
+        """Delete all chunks belonging to a specific document."""
         if self.collection.count() == 0:
             return 0
 
-        # Find all chunk IDs for this document
         all_data = self.collection.get(include=["metadatas"])
 
         ids_to_delete = []
         for chunk_id, metadata in zip(all_data["ids"], all_data["metadatas"]):
             if metadata.get("source") == source:
+                ids_to_delete.append(chunk_id)
+
+        if ids_to_delete:
+            self.collection.delete(ids=ids_to_delete)
+
+        return len(ids_to_delete)
+
+    def delete_collection_group(self, collection_name: str) -> int:
+        """Delete all chunks belonging to a collection/folder."""
+        if self.collection.count() == 0:
+            return 0
+
+        all_data = self.collection.get(include=["metadatas"])
+
+        ids_to_delete = []
+        for chunk_id, metadata in zip(all_data["ids"], all_data["metadatas"]):
+            if metadata.get("collection") == collection_name:
                 ids_to_delete.append(chunk_id)
 
         if ids_to_delete:
@@ -208,13 +261,33 @@ class VectorStore:
 
         return len(results["ids"]) > 0
 
+    def get_document_collection(self, source: str) -> str | None:
+        """Get the collection name for a document."""
+        if self.collection.count() == 0:
+            return None
+
+        results = self.collection.get(
+            where={"source": source},
+            limit=1,
+            include=["metadatas"],
+        )
+
+        if results["ids"] and results["metadatas"]:
+            return results["metadatas"][0].get("collection")
+        return None
+
     def get_stats(self) -> dict:
         """Return collection statistics."""
-        documents = self.list_documents()
+        collections = self.list_collections()
+        total_docs = sum(len(docs) for docs in collections.values())
         return {
             "total_chunks": self.collection.count(),
-            "total_documents": len(documents),
-            "documents": documents,
+            "total_documents": total_docs,
+            "total_collections": len(collections),
+            "collections": {
+                name: {"documents": len(docs), "chunks": sum(d["chunks"] for d in docs)}
+                for name, docs in collections.items()
+            },
             "collection_name": settings.chroma_collection_name,
             "persist_dir": settings.chroma_persist_dir,
             "embedding_model": settings.embedding_model,
@@ -222,7 +295,7 @@ class VectorStore:
         }
 
     def delete_collection(self):
-        """Delete all data in the collection. Use with caution."""
+        """Delete all data. Use with caution."""
         self.client.delete_collection(settings.chroma_collection_name)
         self.collection = self.client.get_or_create_collection(
             name=settings.chroma_collection_name,

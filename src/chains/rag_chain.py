@@ -1,18 +1,9 @@
 """
-RAG Chain Module with Conversation Memory and Source Filtering.
+RAG Chain Module with Conversation Memory and Multi-Source Filtering.
 
-Connects retrieval (vector search) to the LLM (Gemini/Claude) to answer
-questions about legal documents with citations. Supports:
+Supports:
     - Multi-turn conversations (follow-up questions)
-    - Source filtering (restrict answers to specific documents)
-
-Usage:
-    from src.chains.rag_chain import RAGChain
-
-    chain = RAGChain()
-    r1 = chain.ask("When is rent due?", session_id="user1")
-    r2 = chain.ask("What about late fees?", session_id="user1")
-    r3 = chain.ask("Summarize this", source_filter="lease.pdf")
+    - Multi-source filtering (restrict to specific files/collections)
 """
 
 import time
@@ -50,7 +41,7 @@ Provide a clear answer based on the context above, with source citations."""
 
 
 class RAGChain:
-    """Retrieval-Augmented Generation chain with memory and source filtering."""
+    """RAG chain with memory and multi-source filtering."""
 
     def __init__(self):
         self.vector_store = VectorStore()
@@ -92,11 +83,12 @@ class RAGChain:
         for i, result in enumerate(results, start=1):
             source = result["metadata"].get("source", "Unknown")
             page = result["metadata"].get("page", "N/A")
+            collection = result["metadata"].get("collection", "")
             score = result.get("score", 0)
 
             context_parts.append(
-                f"[Passage {i}] (Source: {source}, Page: {page}, "
-                f"Relevance: {score:.2f})\n{result['text']}"
+                f"[Passage {i}] (Source: {source}, Collection: {collection}, "
+                f"Page: {page}, Relevance: {score:.2f})\n{result['text']}"
             )
 
         return "\n\n".join(context_parts)
@@ -107,6 +99,7 @@ class RAGChain:
             sources.append({
                 "source": result["metadata"].get("source", "Unknown"),
                 "page": result["metadata"].get("page", "N/A"),
+                "collection": result["metadata"].get("collection", "General"),
                 "chunk_index": result["metadata"].get("chunk_index", "N/A"),
                 "relevance_score": round(result.get("score", 0), 3),
                 "text_preview": result["text"][:150] + "..."
@@ -132,7 +125,7 @@ class RAGChain:
         question: str,
         k: int = 5,
         session_id: str = "default",
-        source_filter: str | None = None,
+        source_filters: list[str] | None = None,
     ) -> dict:
         """
         Ask a question about the uploaded documents.
@@ -141,44 +134,41 @@ class RAGChain:
             question: Natural language question.
             k: Number of context chunks to retrieve.
             session_id: Conversation session ID for memory.
-            source_filter: Optional filename to restrict to one document.
+            source_filters: Optional list of filenames to restrict search.
+                           None means search everything.
 
         Returns:
-            Dict with answer, sources, query, session_id, and source_filter.
+            Dict with answer, sources, query, session_id.
         """
-        # Step 1: Retrieve relevant chunks
         search_query = self._build_search_query(question, session_id)
         results = self.vector_store.search(
             query=search_query,
             k=k,
-            source_filter=source_filter,
+            source_filters=source_filters,
         )
 
         if not results:
-            msg = "No documents have been uploaded yet." if not source_filter else \
-                  f"No relevant content found in '{source_filter}'."
+            msg = "No documents have been uploaded yet." if not source_filters else \
+                  "No relevant content found in the selected documents."
             return {
-                "answer": msg + " Please upload a legal document first.",
+                "answer": msg + " Please upload a legal document or adjust your filters.",
                 "sources": [],
                 "query": question,
                 "num_sources": 0,
                 "session_id": session_id,
-                "source_filter": source_filter,
+                "source_filters": source_filters,
             }
 
-        # Step 2: Format context and history
         context = self._format_context(results)
         history_text = self._format_history(session_id)
         history_section = history_text if history_text else "No previous conversation."
 
-        # Step 3: Build the prompt
         user_message = QUERY_TEMPLATE.format(
             context=context,
             history_section=history_section,
             question=question,
         )
 
-        # Step 4: Call the LLM (with retry for rate limits)
         messages = [
             ("system", SYSTEM_PROMPT),
             ("human", user_message),
@@ -197,11 +187,9 @@ class RAGChain:
                 else:
                     raise
 
-        # Step 5: Store in memory
         self._add_to_memory(session_id, "user", question)
         self._add_to_memory(session_id, "assistant", response.content)
 
-        # Step 6: Return result
         sources = self._extract_sources(results)
 
         return {
@@ -210,7 +198,7 @@ class RAGChain:
             "query": question,
             "num_sources": len(sources),
             "session_id": session_id,
-            "source_filter": source_filter,
+            "source_filters": source_filters,
         }
 
     def clear_memory(self, session_id: str = "default"):

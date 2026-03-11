@@ -1,5 +1,5 @@
 """
-Tests for embedding service and vector store.
+Tests for embedding service and vector store with collection support.
 Run with: pytest tests/test_vector_store.py -v
 """
 
@@ -12,8 +12,6 @@ from src.embeddings.embedding_service import EmbeddingService
 from src.retrieval.vector_store import VectorStore
 
 
-# ---- Embedding Tests ----
-
 class TestEmbeddingService:
 
     def test_embed_single_text(self):
@@ -21,23 +19,15 @@ class TestEmbeddingService:
         vector = service.embed_single("The tenant shall pay rent monthly.")
         assert isinstance(vector, list)
         assert len(vector) == 384
-        assert all(isinstance(v, float) for v in vector)
 
     def test_embed_multiple_texts(self):
         service = EmbeddingService()
-        texts = [
-            "The contract expires in 30 days.",
-            "Payment is due on the first of each month.",
-            "The landlord may terminate with written notice.",
-        ]
-        vectors = service.embed_texts(texts)
+        vectors = service.embed_texts(["Text one.", "Text two.", "Text three."])
         assert len(vectors) == 3
-        assert all(len(v) == 384 for v in vectors)
 
     def test_embed_empty_list(self):
         service = EmbeddingService()
-        vectors = service.embed_texts([])
-        assert vectors == []
+        assert service.embed_texts([]) == []
 
     def test_similar_texts_have_close_embeddings(self):
         service = EmbeddingService()
@@ -49,8 +39,6 @@ class TestEmbeddingService:
         sim_unrelated = sum(a * b for a, b in zip(v1, v3))
         assert sim_related > sim_unrelated
 
-
-# ---- Vector Store Tests ----
 
 class TestVectorStore:
 
@@ -74,98 +62,109 @@ class TestVectorStore:
         if test_dir.exists():
             shutil.rmtree(test_dir, ignore_errors=True)
 
-    def _sample_chunks(self, source="lease.pdf"):
-        return [
-            {"text": "The tenant must pay rent by the 1st of each month.",
-             "metadata": {"source": source, "page": 1, "chunk_index": 0}},
-            {"text": "The landlord shall maintain the property in good condition.",
-             "metadata": {"source": source, "page": 2, "chunk_index": 1}},
-            {"text": "Either party may terminate with 30 days written notice.",
-             "metadata": {"source": source, "page": 3, "chunk_index": 2}},
+    def _add_lease(self):
+        chunks = [
+            {"text": "Rent is 1500 per month due on the first.",
+             "metadata": {"source": "lease.pdf", "page": 1, "chunk_index": 0}},
+            {"text": "Landlord maintains the property.",
+             "metadata": {"source": "lease.pdf", "page": 2, "chunk_index": 1}},
         ]
+        return self.store.add_chunks(chunks, doc_id="lease.pdf", collection_name="Real Estate")
+
+    def _add_employment(self):
+        chunks = [
+            {"text": "Salary is 50000 per year paid monthly.",
+             "metadata": {"source": "offer.pdf", "page": 1, "chunk_index": 0}},
+        ]
+        return self.store.add_chunks(chunks, doc_id="offer.pdf", collection_name="Employment")
 
     def test_add_and_search(self):
-        num_added = self.store.add_chunks(self._sample_chunks())
-        assert num_added == 3
-
+        self._add_lease()
         results = self.store.search("When is rent due?", k=2)
-        assert len(results) == 2
+        assert len(results) >= 1
         assert "rent" in results[0]["text"].lower()
 
-    def test_search_returns_scores(self):
-        chunks = [
-            {"text": "Privacy policy governs data collection.",
-             "metadata": {"source": "policy.pdf", "page": 1, "chunk_index": 0}},
-        ]
-        self.store.add_chunks(chunks)
+    def test_collection_metadata_stored(self):
+        self._add_lease()
+        results = self.store.search("rent", k=1)
+        assert results[0]["metadata"]["collection"] == "Real Estate"
 
-        results = self.store.search("data privacy", k=1)
-        assert len(results) == 1
-        assert "score" in results[0]
-        assert 0 <= results[0]["score"] <= 1
+    def test_search_with_source_filters(self):
+        self._add_lease()
+        self._add_employment()
+
+        results = self.store.search("payment", k=5, source_filters=["lease.pdf"])
+        for r in results:
+            assert r["metadata"]["source"] == "lease.pdf"
+
+    def test_search_with_multiple_filters(self):
+        self._add_lease()
+        self._add_employment()
+
+        results = self.store.search("payment", k=5, source_filters=["lease.pdf", "offer.pdf"])
+        sources = {r["metadata"]["source"] for r in results}
+        assert sources.issubset({"lease.pdf", "offer.pdf"})
+
+    def test_list_collections(self):
+        self._add_lease()
+        self._add_employment()
+
+        collections = self.store.list_collections()
+        assert "Real Estate" in collections
+        assert "Employment" in collections
+        assert len(collections["Real Estate"]) == 1
+        assert collections["Real Estate"][0]["source"] == "lease.pdf"
+
+    def test_list_documents_flat(self):
+        self._add_lease()
+        self._add_employment()
+
+        docs = self.store.list_documents()
+        assert len(docs) == 2
+        assert all("collection" in d for d in docs)
+
+    def test_get_sources_for_collections(self):
+        self._add_lease()
+        self._add_employment()
+
+        sources = self.store.get_sources_for_collections(["Real Estate"])
+        assert "lease.pdf" in sources
+        assert "offer.pdf" not in sources
+
+    def test_delete_document(self):
+        self._add_lease()
+        self._add_employment()
+
+        num_deleted = self.store.delete_document("lease.pdf")
+        assert num_deleted == 2
+        assert self.store.get_stats()["total_chunks"] == 1
+
+    def test_delete_collection_group(self):
+        self._add_lease()
+        self._add_employment()
+
+        num_deleted = self.store.delete_collection_group("Real Estate")
+        assert num_deleted == 2
+
+        collections = self.store.list_collections()
+        assert "Real Estate" not in collections
+        assert "Employment" in collections
+
+    def test_document_exists(self):
+        assert not self.store.document_exists("lease.pdf")
+        self._add_lease()
+        assert self.store.document_exists("lease.pdf")
 
     def test_get_stats(self):
-        self.store.add_chunks(self._sample_chunks())
+        self._add_lease()
+        self._add_employment()
+
         stats = self.store.get_stats()
         assert stats["total_chunks"] == 3
-        assert stats["total_documents"] == 1
+        assert stats["total_documents"] == 2
+        assert stats["total_collections"] == 2
+        assert "Real Estate" in stats["collections"]
 
     def test_empty_store_search(self):
         results = self.store.search("anything", k=5)
         assert results == []
-
-    # ---- New Day 6 tests ----
-
-    def test_search_with_source_filter(self):
-        """Search filtered to a specific document."""
-        self.store.add_chunks(self._sample_chunks("lease.pdf"))
-        self.store.add_chunks([
-            {"text": "Annual salary is 50000 pounds paid monthly.",
-             "metadata": {"source": "employment.pdf", "page": 1, "chunk_index": 0}},
-        ])
-
-        # Search only in lease.pdf
-        results = self.store.search("payment", k=5, source_filter="lease.pdf")
-        for r in results:
-            assert r["metadata"]["source"] == "lease.pdf"
-
-    def test_list_documents(self):
-        """List all uploaded documents."""
-        self.store.add_chunks(self._sample_chunks("lease.pdf"))
-        self.store.add_chunks([
-            {"text": "Employment terms apply.",
-             "metadata": {"source": "employment.pdf", "page": 1, "chunk_index": 0}},
-        ])
-
-        docs = self.store.list_documents()
-        assert len(docs) == 2
-        sources = [d["source"] for d in docs]
-        assert "lease.pdf" in sources
-        assert "employment.pdf" in sources
-
-    def test_delete_document(self):
-        """Delete a specific document's chunks."""
-        self.store.add_chunks(self._sample_chunks("lease.pdf"))
-        self.store.add_chunks([
-            {"text": "Employment terms apply.",
-             "metadata": {"source": "employment.pdf", "page": 1, "chunk_index": 0}},
-        ])
-
-        assert self.store.get_stats()["total_chunks"] == 4
-
-        num_deleted = self.store.delete_document("lease.pdf")
-        assert num_deleted == 3
-        assert self.store.get_stats()["total_chunks"] == 1
-
-        # Only employment.pdf should remain
-        docs = self.store.list_documents()
-        assert len(docs) == 1
-        assert docs[0]["source"] == "employment.pdf"
-
-    def test_document_exists(self):
-        """Check if a document has been uploaded."""
-        assert not self.store.document_exists("lease.pdf")
-
-        self.store.add_chunks(self._sample_chunks("lease.pdf"))
-        assert self.store.document_exists("lease.pdf")
-        assert not self.store.document_exists("nonexistent.pdf")

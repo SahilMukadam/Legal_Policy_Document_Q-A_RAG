@@ -1,8 +1,8 @@
 """
 Legal Document Q&A — Streamlit Frontend
 
-A chat-based UI for uploading legal documents and asking questions
-with cited answers. Modern glassmorphism design.
+Features: Collection-based document management, tree-checkbox filtering,
+glassmorphism UI, multi-turn conversations.
 
 Run with: streamlit run app.py
 """
@@ -28,10 +28,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ---- Modern Glassmorphism CSS ----
+# ---- CSS ----
 st.markdown("""
 <style>
-    /* ===== FULL WIDTH LAYOUT ===== */
     .block-container {
         max-width: 100% !important;
         padding-left: 2rem !important;
@@ -39,10 +38,9 @@ st.markdown("""
         padding-top: 1rem !important;
     }
 
-    /* ===== SIDEBAR STYLING ===== */
     [data-testid="stSidebar"] {
-        min-width: 320px !important;
-        max-width: 360px !important;
+        min-width: 340px !important;
+        max-width: 380px !important;
     }
 
     [data-testid="stSidebar"] > div:first-child {
@@ -52,7 +50,6 @@ st.markdown("""
         border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
     }
 
-    /* ===== SOURCE BOXES (Dark + Light mode) ===== */
     .source-box {
         background: rgba(100, 140, 200, 0.1) !important;
         border-left: 3px solid #5b9bf5 !important;
@@ -61,154 +58,95 @@ st.markdown("""
         border-radius: 0 12px 12px 0 !important;
         color: inherit !important;
         backdrop-filter: blur(10px) !important;
-        -webkit-backdrop-filter: blur(10px) !important;
     }
 
-    .source-box strong {
-        color: #5b9bf5 !important;
-    }
+    .source-box strong { color: #5b9bf5 !important; }
+    .source-box em { color: inherit !important; opacity: 0.85; }
 
-    .source-box em {
-        color: inherit !important;
-        opacity: 0.85;
-    }
-
-    /* ===== GLASSMORPHISM CARDS ===== */
-    .glass-card {
-        background: rgba(255, 255, 255, 0.06) !important;
-        backdrop-filter: blur(16px) !important;
-        -webkit-backdrop-filter: blur(16px) !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        border-radius: 16px !important;
-        padding: 20px !important;
-        margin: 10px 0 !important;
-    }
-
-    /* ===== DOCUMENT CARD IN SIDEBAR ===== */
     .doc-item {
         background: rgba(255, 255, 255, 0.05) !important;
         border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 10px !important;
+        padding: 8px 12px !important;
+        margin: 4px 0 !important;
+        color: inherit !important;
+    }
+
+    .doc-item .doc-name { font-weight: 500 !important; font-size: 0.85em !important; color: inherit !important; }
+    .doc-item .doc-meta { font-size: 0.7em !important; opacity: 0.5 !important; color: inherit !important; }
+
+    .coll-header {
+        background: rgba(91, 155, 245, 0.08) !important;
+        border: 1px solid rgba(91, 155, 245, 0.15) !important;
         border-radius: 12px !important;
         padding: 10px 14px !important;
-        margin: 6px 0 !important;
-        color: inherit !important;
-        transition: background 0.2s ease !important;
-    }
-
-    .doc-item:hover {
-        background: rgba(255, 255, 255, 0.1) !important;
-    }
-
-    .doc-item .doc-name {
-        font-weight: 600 !important;
-        font-size: 0.9em !important;
+        margin: 8px 0 4px 0 !important;
         color: inherit !important;
     }
 
-    .doc-item .doc-meta {
-        font-size: 0.75em !important;
-        opacity: 0.6 !important;
-        color: inherit !important;
-    }
+    .coll-header .coll-name { font-weight: 600 !important; font-size: 0.9em !important; color: inherit !important; }
+    .coll-header .coll-meta { font-size: 0.7em !important; opacity: 0.5 !important; color: inherit !important; }
 
-    /* ===== METRIC BADGES ===== */
-    .metric-row {
-        display: flex;
-        gap: 12px;
-        margin: 12px 0;
-    }
+    .metric-row { display: flex; gap: 10px; margin: 10px 0; }
 
     .metric-badge {
         background: rgba(91, 155, 245, 0.1) !important;
         border: 1px solid rgba(91, 155, 245, 0.2) !important;
         border-radius: 12px !important;
-        padding: 12px 16px !important;
+        padding: 10px 14px !important;
         flex: 1 !important;
         text-align: center !important;
         color: inherit !important;
     }
 
-    .metric-badge .metric-value {
-        font-size: 1.5em !important;
-        font-weight: 700 !important;
-        color: #5b9bf5 !important;
-    }
+    .metric-badge .metric-value { font-size: 1.4em !important; font-weight: 700 !important; color: #5b9bf5 !important; }
+    .metric-badge .metric-label { font-size: 0.7em !important; opacity: 0.5 !important; color: inherit !important; }
 
-    .metric-badge .metric-label {
-        font-size: 0.75em !important;
-        opacity: 0.6 !important;
-        color: inherit !important;
-        margin-top: 2px !important;
-    }
-
-    /* ===== CHAT MESSAGES ===== */
     [data-testid="stChatMessage"] {
         background: rgba(255, 255, 255, 0.03) !important;
         border: 1px solid rgba(255, 255, 255, 0.06) !important;
         border-radius: 16px !important;
         padding: 16px !important;
         margin: 8px 0 !important;
-        backdrop-filter: blur(8px) !important;
-        -webkit-backdrop-filter: blur(8px) !important;
     }
 
-    /* ===== CHAT INPUT AREA ===== */
     [data-testid="stChatInput"] {
         background: rgba(255, 255, 255, 0.04) !important;
         border: 1px solid rgba(91, 155, 245, 0.2) !important;
         border-radius: 20px !important;
         padding: 2px !important;
         backdrop-filter: blur(16px) !important;
-        -webkit-backdrop-filter: blur(16px) !important;
         box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1) !important;
     }
 
     [data-testid="stChatInput"] textarea {
-        border-radius: 12px !important;
         border: none !important;
         background: transparent !important;
-        font-size: 1em !important;
+        border-radius: 16px !important;
         padding: 8px 12px !important;
         color: inherit !important;
     }
 
-    [data-testid="stChatInput"] textarea:focus {
-        box-shadow: none !important;
-        border: none !important;
-    }
-
-    [data-testid="stChatInput"] textarea::placeholder {
-        color: inherit !important;
-        opacity: 0.4 !important;
-    }
+    [data-testid="stChatInput"] textarea:focus { box-shadow: none !important; border: none !important; }
+    [data-testid="stChatInput"] textarea::placeholder { color: inherit !important; opacity: 0.4 !important; }
 
     [data-testid="stChatInput"] button {
         border-radius: 14px !important;
         background: linear-gradient(135deg, #5b9bf5, #8b5cf6) !important;
         border: none !important;
-        margin: 4px !important;
     }
 
-    [data-testid="stChatInput"] button:hover {
-        box-shadow: 0 4px 16px rgba(91, 155, 245, 0.3) !important;
-    }
+    [data-testid="stChatInput"] button svg { fill: white !important; }
 
-    [data-testid="stChatInput"] button svg {
-        fill: white !important;
-    }
-
-    /* ===== BOTTOM CHAT INPUT CONTAINER ===== */
     .stChatFloatingInputContainer {
         background: transparent !important;
         border-top: 1px solid rgba(255, 255, 255, 0.06) !important;
-        padding-top: 12px !important;
+        padding-top: 8px !important;
     }
 
-    /* ===== BUTTONS ===== */
     .stButton > button {
         border-radius: 12px !important;
         border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        backdrop-filter: blur(10px) !important;
         transition: all 0.2s ease !important;
     }
 
@@ -217,21 +155,10 @@ st.markdown("""
         box-shadow: 0 4px 16px rgba(91, 155, 245, 0.15) !important;
     }
 
-    /* ===== NEW CONVERSATION BUTTON ===== */
     .new-convo-btn > button {
         background: linear-gradient(135deg, rgba(91, 155, 245, 0.15), rgba(139, 92, 246, 0.15)) !important;
         border: 1px solid rgba(91, 155, 245, 0.25) !important;
-        color: inherit !important;
         font-weight: 600 !important;
-    }
-
-    .new-convo-btn > button:hover {
-        background: linear-gradient(135deg, rgba(91, 155, 245, 0.25), rgba(139, 92, 246, 0.25)) !important;
-    }
-
-    /* ===== FILE UPLOADER ===== */
-    [data-testid="stFileUploader"] {
-        border-radius: 12px !important;
     }
 
     [data-testid="stFileUploader"] section {
@@ -240,18 +167,13 @@ st.markdown("""
         background: rgba(91, 155, 245, 0.03) !important;
     }
 
-    /* ===== EXPANDER (SOURCES) ===== */
     [data-testid="stExpander"] {
         border: 1px solid rgba(255, 255, 255, 0.08) !important;
         border-radius: 12px !important;
         background: rgba(255, 255, 255, 0.02) !important;
     }
 
-    /* ===== HEADER ===== */
-    .app-header {
-        text-align: center;
-        padding: 20px 0 10px 0;
-    }
+    .app-header { text-align: center; padding: 16px 0 8px 0; }
 
     .app-header h1 {
         font-size: 2.2em !important;
@@ -260,15 +182,10 @@ st.markdown("""
         -webkit-background-clip: text !important;
         -webkit-text-fill-color: transparent !important;
         background-clip: text !important;
-        margin-bottom: 4px !important;
     }
 
-    .app-header p {
-        opacity: 0.5;
-        font-size: 0.95em;
-    }
+    .app-header p { opacity: 0.5; font-size: 0.95em; }
 
-    /* ===== WELCOME CARD ===== */
     .welcome-card {
         background: rgba(91, 155, 245, 0.05) !important;
         border: 1px solid rgba(91, 155, 245, 0.1) !important;
@@ -277,16 +194,11 @@ st.markdown("""
         text-align: center !important;
         margin: 40px auto !important;
         max-width: 600px !important;
-        backdrop-filter: blur(16px) !important;
-        -webkit-backdrop-filter: blur(16px) !important;
         color: inherit !important;
     }
 
-    .welcome-card h3 {
-        color: inherit !important;
-    }
+    .welcome-card h3 { color: inherit !important; }
 
-    /* ===== UPLOAD SUCCESS CARD ===== */
     .upload-success {
         background: rgba(34, 197, 94, 0.08) !important;
         border: 1px solid rgba(34, 197, 94, 0.2) !important;
@@ -296,24 +208,29 @@ st.markdown("""
         margin: 8px 0 !important;
     }
 
-    /* ===== SETTINGS SECTION ===== */
-    .settings-label {
-        font-size: 0.8em !important;
-        opacity: 0.5 !important;
-        margin-bottom: 2px !important;
+    .filter-section {
+        background: rgba(255, 255, 255, 0.03) !important;
+        border: 1px solid rgba(255, 255, 255, 0.06) !important;
+        border-radius: 12px !important;
+        padding: 12px !important;
+        margin: 8px 0 !important;
+    }
+
+    .filter-label {
+        font-size: 0.75em !important;
+        opacity: 0.4 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.05em !important;
+        margin-bottom: 4px !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
-# ---- Initialize Components (cached) ----
+# ---- Initialize Components ----
 @st.cache_resource
 def init_components():
-    parser = DocumentParser()
-    chunker = TextChunker()
-    vector_store = VectorStore()
-    rag_chain = RAGChain()
-    return parser, chunker, vector_store, rag_chain
+    return DocumentParser(), TextChunker(), VectorStore(), RAGChain()
 
 
 parser, chunker, vector_store, rag_chain = init_components()
@@ -322,10 +239,8 @@ parser, chunker, vector_store, rag_chain = init_components()
 # ---- Session State ----
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())[:8]
-
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-
 if "upload_complete" not in st.session_state:
     st.session_state.upload_complete = False
 
@@ -334,7 +249,7 @@ if "upload_complete" not in st.session_state:
 with st.sidebar:
     st.markdown("## ⚖️ Legal Q&A")
 
-    # New Conversation — at the top
+    # New Conversation
     st.markdown('<div class="new-convo-btn">', unsafe_allow_html=True)
     if st.button("✨ New Conversation", use_container_width=True):
         rag_chain.clear_memory(st.session_state.session_id)
@@ -345,15 +260,19 @@ with st.sidebar:
 
     st.divider()
 
-    # Document section
+    # ---- DOCUMENTS & COLLECTIONS ----
     st.markdown("### 📁 Documents")
 
-    documents = vector_store.list_documents()
+    collections = vector_store.list_collections()
     stats = vector_store.get_stats()
 
     # Metrics
     st.markdown(
         f"""<div class="metric-row">
+            <div class="metric-badge">
+                <div class="metric-value">{stats['total_collections']}</div>
+                <div class="metric-label">Collections</div>
+            </div>
             <div class="metric-badge">
                 <div class="metric-value">{stats['total_documents']}</div>
                 <div class="metric-label">Documents</div>
@@ -366,44 +285,70 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    # Document list
-    if documents:
-        for doc in documents:
-            col1, col2 = st.columns([4, 1])
-            with col1:
-                st.markdown(
-                    f"""<div class="doc-item">
-                        <div class="doc-name">📄 {doc['source']}</div>
-                        <div class="doc-meta">{doc['chunks']} chunks · {doc['pages']} page(s)</div>
-                    </div>""",
-                    unsafe_allow_html=True,
-                )
-            with col2:
-                st.markdown("<div style='padding-top:8px'></div>", unsafe_allow_html=True)
-                if st.button("🗑️", key=f"del_{doc['source']}", help=f"Delete {doc['source']}"):
-                    vector_store.delete_document(doc["source"])
+    # Collection tree with documents
+    if collections:
+        for coll_name, docs in collections.items():
+            total_chunks = sum(d["chunks"] for d in docs)
+            with st.expander(f"📁 {coll_name} ({len(docs)} files)", expanded=False):
+                for doc in docs:
+                    col1, col2 = st.columns([5, 1])
+                    with col1:
+                        st.markdown(
+                            f"""<div class="doc-item">
+                                <div class="doc-name">📄 {doc['source']}</div>
+                                <div class="doc-meta">{doc['chunks']} chunks · {doc['pages']} pg</div>
+                            </div>""",
+                            unsafe_allow_html=True,
+                        )
+                    with col2:
+                        if st.button("🗑️", key=f"del_{doc['source']}", help=f"Delete {doc['source']}"):
+                            vector_store.delete_document(doc["source"])
+                            st.rerun()
+
+                # Delete entire collection button
+                if st.button(f"🗑️ Delete entire '{coll_name}'", key=f"delcoll_{coll_name}", use_container_width=True):
+                    vector_store.delete_collection_group(coll_name)
                     st.rerun()
     else:
         st.caption("No documents yet.")
 
     st.divider()
 
-    # File upload — only show uploader if not just completed an upload
+    # ---- UPLOAD ----
     st.markdown("### ➕ Upload New")
 
     if st.session_state.upload_complete:
         st.markdown(
-            '<div class="upload-success">✅ Document processed successfully!</div>',
+            '<div class="upload-success">✅ Document processed!</div>',
             unsafe_allow_html=True,
         )
         if st.button("Upload another", use_container_width=True):
             st.session_state.upload_complete = False
             st.rerun()
     else:
+        # Collection picker
+        existing_collections = list(collections.keys()) if collections else []
+        collection_options = existing_collections + ["➕ Create new collection..."]
+
+        selected_collection = st.selectbox(
+            "Collection",
+            collection_options,
+            index=0 if existing_collections else len(collection_options) - 1,
+            help="Every document must belong to a collection",
+        )
+
+        if selected_collection == "➕ Create new collection...":
+            new_collection = st.text_input(
+                "New collection name",
+                placeholder="e.g., Real Estate, Employment, Compliance",
+            )
+            collection_name = new_collection.strip()
+        else:
+            collection_name = selected_collection
+
         uploaded_file = st.file_uploader(
-            "Drop a file here",
+            "Drop a file",
             type=["pdf", "docx", "txt"],
-            help="PDF, DOCX, or TXT",
             label_visibility="collapsed",
         )
 
@@ -416,7 +361,12 @@ with st.sidebar:
             else:
                 overwrite = False
 
-            if st.button("📤 Process", type="primary", use_container_width=True):
+            can_upload = bool(collection_name)
+
+            if not collection_name:
+                st.error("Enter a collection name.")
+
+            if st.button("📤 Process", type="primary", use_container_width=True, disabled=not can_upload):
                 with st.spinner("Parsing & embedding..."):
                     temp_path = f"data/uploads/{uploaded_file.name}"
                     os.makedirs("data/uploads", exist_ok=True)
@@ -432,7 +382,11 @@ with st.sidebar:
 
                         doc_pages = parser.parse(temp_path)
                         chunks = chunker.chunk(doc_pages)
-                        num_stored = vector_store.add_chunks(chunks, doc_id=uploaded_file.name)
+                        num_stored = vector_store.add_chunks(
+                            chunks,
+                            doc_id=uploaded_file.name,
+                            collection_name=collection_name,
+                        )
 
                         st.session_state.upload_complete = True
                         st.rerun()
@@ -441,30 +395,59 @@ with st.sidebar:
 
     st.divider()
 
-    # Search settings
+    # ---- SEARCH SCOPE FILTER ----
+    st.markdown("### 🔍 Search Scope")
+
+    # All documents toggle
+    search_all = st.checkbox("All documents", value=True, key="search_all")
+
+    selected_sources = []
+
+    if not search_all and collections:
+        st.markdown('<div class="filter-label">Collections</div>', unsafe_allow_html=True)
+
+        for coll_name, docs in collections.items():
+            # Collection-level checkbox
+            coll_checked = st.checkbox(
+                f"📁 {coll_name} ({len(docs)} files)",
+                key=f"filter_coll_{coll_name}",
+            )
+
+            if coll_checked:
+                # Select all files in this collection
+                for doc in docs:
+                    if doc["source"] not in selected_sources:
+                        selected_sources.append(doc["source"])
+            else:
+                # Show individual file checkboxes indented
+                for doc in docs:
+                    file_checked = st.checkbox(
+                        f"  📄 {doc['source']}",
+                        key=f"filter_file_{doc['source']}",
+                    )
+                    if file_checked and doc["source"] not in selected_sources:
+                        selected_sources.append(doc["source"])
+
+        if selected_sources:
+            st.caption(f"Searching {len(selected_sources)} file(s)")
+        else:
+            st.caption("No files selected — will search all")
+
+    # Determine final filter
+    source_filters = None if search_all or not selected_sources else selected_sources
+
+    st.divider()
+
+    # ---- SETTINGS ----
     st.markdown("### ⚙️ Settings")
 
-    filter_options = ["All documents"] + [doc["source"] for doc in documents]
-    selected_filter = st.selectbox(
-        "Restrict answers to",
-        filter_options,
-    )
-    source_filter = None if selected_filter == "All documents" else selected_filter
-
-    st.markdown(
-        '<div class="settings-label">Context passages sent to the LLM</div>',
-        unsafe_allow_html=True,
-    )
     num_sources = st.slider(
         "Context passages",
         min_value=1,
         max_value=20,
         value=5,
-        help="How many of the top-matching passages to include as context. "
-             "The system always searches ALL chunks — this controls how many "
-             "of the best matches get sent to the AI for answering. Higher = "
-             "more context but slower and potentially noisier.",
-        label_visibility="collapsed",
+        help="Top-matching passages sent to the AI. System searches ALL chunks — "
+             "this controls how many best matches become context for answering.",
     )
 
 
@@ -472,7 +455,7 @@ with st.sidebar:
 st.markdown(
     """<div class="app-header">
         <h1>⚖️ Legal Document Q&A</h1>
-        <p>Upload legal documents · Ask questions · Get cited answers</p>
+        <p>Upload legal documents · Organize in collections · Get cited answers</p>
     </div>""",
     unsafe_allow_html=True,
 )
@@ -483,9 +466,9 @@ if stats["total_chunks"] == 0 and not st.session_state.chat_history:
         """<div class="welcome-card">
             <h3>👋 Welcome</h3>
             <p>Upload a legal document using the sidebar to get started.<br>
-            Supported formats: <strong>PDF, DOCX, TXT</strong></p>
+            Create collections to organize your documents by category.</p>
             <p style="opacity:0.4; font-size:0.85em; margin-top:16px;">
-                Try uploading a lease agreement, privacy policy, or terms of service.
+                Supported formats: <strong>PDF, DOCX, TXT</strong>
             </p>
         </div>""",
         unsafe_allow_html=True,
@@ -499,9 +482,10 @@ for message in st.session_state.chat_history:
         if message["role"] == "assistant" and "sources" in message:
             with st.expander(f"📚 View Sources ({len(message['sources'])})", expanded=False):
                 for i, src in enumerate(message["sources"], 1):
+                    coll_tag = f" [{src.get('collection', '')}]" if src.get('collection') else ""
                     st.markdown(
                         f"""<div class="source-box">
-                            <strong>Passage {i}</strong> — {src["source"]}, 
+                            <strong>Passage {i}</strong> — {src["source"]}{coll_tag}, 
                             Page {src["page"]} 
                             (relevance: {src["relevance_score"]})<br>
                             <em>{src["text_preview"]}</em>
@@ -512,7 +496,7 @@ for message in st.session_state.chat_history:
 # Chat input
 if prompt := st.chat_input("💬 Ask anything about your documents..."):
     if stats["total_chunks"] == 0:
-        st.warning("⚠️ Upload a document first using the sidebar.")
+        st.warning("⚠️ Upload a document first.")
         st.stop()
 
     st.session_state.chat_history.append({"role": "user", "content": prompt})
@@ -525,7 +509,7 @@ if prompt := st.chat_input("💬 Ask anything about your documents..."):
                 question=prompt,
                 k=num_sources,
                 session_id=st.session_state.session_id,
-                source_filter=source_filter,
+                source_filters=source_filters,
             )
 
         st.markdown(result["answer"])
@@ -533,9 +517,10 @@ if prompt := st.chat_input("💬 Ask anything about your documents..."):
         if result["sources"]:
             with st.expander(f"📚 View Sources ({result['num_sources']})", expanded=False):
                 for i, src in enumerate(result["sources"], 1):
+                    coll_tag = f" [{src.get('collection', '')}]" if src.get('collection') else ""
                     st.markdown(
                         f"""<div class="source-box">
-                            <strong>Passage {i}</strong> — {src["source"]}, 
+                            <strong>Passage {i}</strong> — {src["source"]}{coll_tag}, 
                             Page {src["page"]} 
                             (relevance: {src["relevance_score"]})<br>
                             <em>{src["text_preview"]}</em>

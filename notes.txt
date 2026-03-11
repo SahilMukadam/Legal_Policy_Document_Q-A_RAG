@@ -19,4 +19,9 @@ http://localhost:8000/docs — should show Swagger UI (interactive API docs)
 Press Ctrl+C in the terminal to stop the server.
 
 
-#
+# to do tasks
+- control history limits from last 10 chats to more 
+- pop up message if api rate limits are crossed 
+- when minimising to left show minimised icons 
+- show me the structure of how flies are connected/invoked. basically i want to know the wokrflow tree
+- based on the RAG memory uploaded i want it to understand the data and ask me questions if i ask for it 
