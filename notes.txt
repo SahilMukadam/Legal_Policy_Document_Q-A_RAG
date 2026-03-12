@@ -25,3 +25,6 @@ Press Ctrl+C in the terminal to stop the server.
 - when minimising to left show minimised icons 
 - show me the structure of how flies are connected/invoked. basically i want to know the wokrflow tree
 - based on the RAG memory uploaded i want it to understand the data and ask me questions if i ask for it 
+- the model fails to give summary of the document when asked. it says no such data found. which means 
+  the document is answering me to my questions based on individual chunks of data and not co-relating the chunks and finding meaning in them.
+  maybe if i set it to "self.vector_store.search(query=question,k=k,source_filters=None,)". then it may resolve
