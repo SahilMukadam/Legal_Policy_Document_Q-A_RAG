@@ -450,6 +450,12 @@ with st.sidebar:
              "this controls how many best matches become context for answering.",
     )
 
+    use_hybrid = st.toggle(
+        "Hybrid search (semantic + keyword)",
+        value=True,
+        help="Combines meaning-based and keyword-based search for better results. "
+             "Turn off to use pure semantic search only.",
+    )
 
 # ---- Main Content ----
 st.markdown(
@@ -510,6 +516,7 @@ if prompt := st.chat_input("💬 Ask anything about your documents..."):
                 k=num_sources,
                 session_id=st.session_state.session_id,
                 source_filters=source_filters,
+                use_hybrid=use_hybrid,
             )
 
         st.markdown(result["answer"])

@@ -1,13 +1,16 @@
 """
-RAG Chain Module with Conversation Memory and Multi-Source Filtering.
+RAG Chain Module with Conversation Memory, Multi-Source Filtering,
+and Hybrid Search.
 
 Supports:
     - Multi-turn conversations (follow-up questions)
     - Multi-source filtering (restrict to specific files/collections)
+    - Hybrid search (semantic + keyword with reciprocal rank fusion)
 """
 
 import time
 from src.retrieval.vector_store import VectorStore
+from src.retrieval.hybrid_search import HybridSearch
 from src.llm_provider import get_llm
 
 
@@ -41,10 +44,11 @@ Provide a clear answer based on the context above, with source citations."""
 
 
 class RAGChain:
-    """RAG chain with memory and multi-source filtering."""
+    """RAG chain with memory, multi-source filtering, and hybrid search."""
 
     def __init__(self):
         self.vector_store = VectorStore()
+        self.hybrid_search = HybridSearch(self.vector_store)
         self.llm = get_llm()
         self._memory: dict[str, list[dict]] = {}
 
@@ -85,10 +89,11 @@ class RAGChain:
             page = result["metadata"].get("page", "N/A")
             collection = result["metadata"].get("collection", "")
             score = result.get("score", 0)
+            search_type = result.get("search_type", "semantic")
 
             context_parts.append(
                 f"[Passage {i}] (Source: {source}, Collection: {collection}, "
-                f"Page: {page}, Relevance: {score:.2f})\n{result['text']}"
+                f"Page: {page}, Relevance: {score:.4f}, Method: {search_type})\n{result['text']}"
             )
 
         return "\n\n".join(context_parts)
@@ -101,7 +106,8 @@ class RAGChain:
                 "page": result["metadata"].get("page", "N/A"),
                 "collection": result["metadata"].get("collection", "General"),
                 "chunk_index": result["metadata"].get("chunk_index", "N/A"),
-                "relevance_score": round(result.get("score", 0), 3),
+                "relevance_score": round(result.get("score", 0), 4),
+                "search_type": result.get("search_type", "semantic"),
                 "text_preview": result["text"][:150] + "..."
                     if len(result["text"]) > 150
                     else result["text"],
@@ -126,6 +132,7 @@ class RAGChain:
         k: int = 5,
         session_id: str = "default",
         source_filters: list[str] | None = None,
+        use_hybrid: bool = True,
     ) -> dict:
         """
         Ask a question about the uploaded documents.
@@ -135,17 +142,26 @@ class RAGChain:
             k: Number of context chunks to retrieve.
             session_id: Conversation session ID for memory.
             source_filters: Optional list of filenames to restrict search.
-                           None means search everything.
+            use_hybrid: Use hybrid search (semantic + keyword). Default True.
 
         Returns:
             Dict with answer, sources, query, session_id.
         """
         search_query = self._build_search_query(question, session_id)
-        results = self.vector_store.search(
-            query=search_query,
-            k=k,
-            source_filters=source_filters,
-        )
+
+        # Choose search method
+        if use_hybrid:
+            results = self.hybrid_search.search(
+                query=search_query,
+                k=k,
+                source_filters=source_filters,
+            )
+        else:
+            results = self.vector_store.search(
+                query=search_query,
+                k=k,
+                source_filters=source_filters,
+            )
 
         if not results:
             msg = "No documents have been uploaded yet." if not source_filters else \
