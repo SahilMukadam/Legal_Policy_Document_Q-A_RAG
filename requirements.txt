@@ -7,6 +7,9 @@ langchain-text-splitters>=0.3.0
 chromadb>=0.5.0
 sentence-transformers>=3.0.0
 
+# Vector Store — Cloud
+pinecone>=5.0.0
+
 # API Framework
 fastapi>=0.115.0
 uvicorn>=0.32.0

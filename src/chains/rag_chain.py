@@ -1,15 +1,10 @@
 """
 RAG Chain Module with Conversation Memory, Multi-Source Filtering,
-and Hybrid Search.
-
-Supports:
-    - Multi-turn conversations (follow-up questions)
-    - Multi-source filtering (restrict to specific files/collections)
-    - Hybrid search (semantic + keyword with reciprocal rank fusion)
+and Hybrid Search. Uses vector store provider factory for swappable backends.
 """
 
 import time
-from src.retrieval.vector_store import VectorStore
+from src.retrieval.store_provider import get_vector_store
 from src.retrieval.hybrid_search import HybridSearch
 from src.llm_provider import get_llm
 
@@ -47,7 +42,7 @@ class RAGChain:
     """RAG chain with memory, multi-source filtering, and hybrid search."""
 
     def __init__(self):
-        self.vector_store = VectorStore()
+        self.vector_store = get_vector_store()
         self.hybrid_search = HybridSearch(self.vector_store)
         self.llm = get_llm()
         self._memory: dict[str, list[dict]] = {}
@@ -143,13 +138,9 @@ class RAGChain:
             session_id: Conversation session ID for memory.
             source_filters: Optional list of filenames to restrict search.
             use_hybrid: Use hybrid search (semantic + keyword). Default True.
-
-        Returns:
-            Dict with answer, sources, query, session_id.
         """
         search_query = self._build_search_query(question, session_id)
 
-        # Choose search method
         if use_hybrid:
             results = self.hybrid_search.search(
                 query=search_query,

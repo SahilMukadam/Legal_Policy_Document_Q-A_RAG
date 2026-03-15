@@ -1,9 +1,6 @@
 """
 Legal Document Q&A — Streamlit Frontend
 
-Features: Collection-based document management, tree-checkbox filtering,
-glassmorphism UI, multi-turn conversations.
-
 Run with: streamlit run app.py
 """
 
@@ -16,7 +13,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from src.ingestion.parser import DocumentParser
 from src.ingestion.chunker import TextChunker
-from src.retrieval.vector_store import VectorStore
+from src.retrieval.store_provider import get_vector_store
 from src.chains.rag_chain import RAGChain
 
 
@@ -75,18 +72,6 @@ st.markdown("""
     .doc-item .doc-name { font-weight: 500 !important; font-size: 0.85em !important; color: inherit !important; }
     .doc-item .doc-meta { font-size: 0.7em !important; opacity: 0.5 !important; color: inherit !important; }
 
-    .coll-header {
-        background: rgba(91, 155, 245, 0.08) !important;
-        border: 1px solid rgba(91, 155, 245, 0.15) !important;
-        border-radius: 12px !important;
-        padding: 10px 14px !important;
-        margin: 8px 0 4px 0 !important;
-        color: inherit !important;
-    }
-
-    .coll-header .coll-name { font-weight: 600 !important; font-size: 0.9em !important; color: inherit !important; }
-    .coll-header .coll-meta { font-size: 0.7em !important; opacity: 0.5 !important; color: inherit !important; }
-
     .metric-row { display: flex; gap: 10px; margin: 10px 0; }
 
     .metric-badge {
@@ -114,7 +99,7 @@ st.markdown("""
         background: rgba(255, 255, 255, 0.04) !important;
         border: 1px solid rgba(91, 155, 245, 0.2) !important;
         border-radius: 20px !important;
-        padding: 2px !important;
+        padding: 4px !important;
         backdrop-filter: blur(16px) !important;
         box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1) !important;
     }
@@ -123,7 +108,7 @@ st.markdown("""
         border: none !important;
         background: transparent !important;
         border-radius: 16px !important;
-        padding: 8px 12px !important;
+        padding: 10px 14px !important;
         color: inherit !important;
     }
 
@@ -208,20 +193,19 @@ st.markdown("""
         margin: 8px 0 !important;
     }
 
-    .filter-section {
-        background: rgba(255, 255, 255, 0.03) !important;
-        border: 1px solid rgba(255, 255, 255, 0.06) !important;
-        border-radius: 12px !important;
-        padding: 12px !important;
-        margin: 8px 0 !important;
-    }
-
     .filter-label {
         font-size: 0.75em !important;
         opacity: 0.4 !important;
         text-transform: uppercase !important;
         letter-spacing: 0.05em !important;
         margin-bottom: 4px !important;
+    }
+
+    .provider-badge {
+        font-size: 0.7em !important;
+        opacity: 0.3 !important;
+        text-align: center !important;
+        margin-top: 8px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -230,7 +214,7 @@ st.markdown("""
 # ---- Initialize Components ----
 @st.cache_resource
 def init_components():
-    return DocumentParser(), TextChunker(), VectorStore(), RAGChain()
+    return DocumentParser(), TextChunker(), get_vector_store(), RAGChain()
 
 
 parser, chunker, vector_store, rag_chain = init_components()
@@ -260,13 +244,12 @@ with st.sidebar:
 
     st.divider()
 
-    # ---- DOCUMENTS & COLLECTIONS ----
+    # ---- DOCUMENTS ----
     st.markdown("### 📁 Documents")
 
     collections = vector_store.list_collections()
     stats = vector_store.get_stats()
 
-    # Metrics
     st.markdown(
         f"""<div class="metric-row">
             <div class="metric-badge">
@@ -285,10 +268,8 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    # Collection tree with documents
     if collections:
         for coll_name, docs in collections.items():
-            total_chunks = sum(d["chunks"] for d in docs)
             with st.expander(f"📁 {coll_name} ({len(docs)} files)", expanded=False):
                 for doc in docs:
                     col1, col2 = st.columns([5, 1])
@@ -305,8 +286,7 @@ with st.sidebar:
                             vector_store.delete_document(doc["source"])
                             st.rerun()
 
-                # Delete entire collection button
-                if st.button(f"🗑️ Delete entire '{coll_name}'", key=f"delcoll_{coll_name}", use_container_width=True):
+                if st.button(f"🗑️ Delete '{coll_name}'", key=f"delcoll_{coll_name}", use_container_width=True):
                     vector_store.delete_collection_group(coll_name)
                     st.rerun()
     else:
@@ -318,15 +298,11 @@ with st.sidebar:
     st.markdown("### ➕ Upload New")
 
     if st.session_state.upload_complete:
-        st.markdown(
-            '<div class="upload-success">✅ Document processed!</div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown('<div class="upload-success">✅ Document processed!</div>', unsafe_allow_html=True)
         if st.button("Upload another", use_container_width=True):
             st.session_state.upload_complete = False
             st.rerun()
     else:
-        # Collection picker
         existing_collections = list(collections.keys()) if collections else []
         collection_options = existing_collections + ["➕ Create new collection..."]
 
@@ -334,27 +310,18 @@ with st.sidebar:
             "Collection",
             collection_options,
             index=0 if existing_collections else len(collection_options) - 1,
-            help="Every document must belong to a collection",
         )
 
         if selected_collection == "➕ Create new collection...":
-            new_collection = st.text_input(
-                "New collection name",
-                placeholder="e.g., Real Estate, Employment, Compliance",
-            )
+            new_collection = st.text_input("New collection name", placeholder="e.g., Real Estate")
             collection_name = new_collection.strip()
         else:
             collection_name = selected_collection
 
-        uploaded_file = st.file_uploader(
-            "Drop a file",
-            type=["pdf", "docx", "txt"],
-            label_visibility="collapsed",
-        )
+        uploaded_file = st.file_uploader("Drop a file", type=["pdf", "docx", "txt"], label_visibility="collapsed")
 
         if uploaded_file:
             already_exists = vector_store.document_exists(uploaded_file.name)
-
             if already_exists:
                 st.warning(f"'{uploaded_file.name}' exists.")
                 overwrite = st.checkbox("Overwrite?", key="overwrite")
@@ -362,7 +329,6 @@ with st.sidebar:
                 overwrite = False
 
             can_upload = bool(collection_name)
-
             if not collection_name:
                 st.error("Enter a collection name.")
 
@@ -383,11 +349,8 @@ with st.sidebar:
                         doc_pages = parser.parse(temp_path)
                         chunks = chunker.chunk(doc_pages)
                         num_stored = vector_store.add_chunks(
-                            chunks,
-                            doc_id=uploaded_file.name,
-                            collection_name=collection_name,
+                            chunks, doc_id=uploaded_file.name, collection_name=collection_name,
                         )
-
                         st.session_state.upload_complete = True
                         st.rerun()
                     except Exception as e:
@@ -395,45 +358,31 @@ with st.sidebar:
 
     st.divider()
 
-    # ---- SEARCH SCOPE FILTER ----
+    # ---- SEARCH SCOPE ----
     st.markdown("### 🔍 Search Scope")
 
-    # All documents toggle
     search_all = st.checkbox("All documents", value=True, key="search_all")
-
     selected_sources = []
 
     if not search_all and collections:
         st.markdown('<div class="filter-label">Collections</div>', unsafe_allow_html=True)
 
         for coll_name, docs in collections.items():
-            # Collection-level checkbox
-            coll_checked = st.checkbox(
-                f"📁 {coll_name} ({len(docs)} files)",
-                key=f"filter_coll_{coll_name}",
-            )
+            coll_checked = st.checkbox(f"📁 {coll_name} ({len(docs)} files)", key=f"filter_coll_{coll_name}")
 
             if coll_checked:
-                # Select all files in this collection
                 for doc in docs:
                     if doc["source"] not in selected_sources:
                         selected_sources.append(doc["source"])
             else:
-                # Show individual file checkboxes indented
                 for doc in docs:
-                    file_checked = st.checkbox(
-                        f"  📄 {doc['source']}",
-                        key=f"filter_file_{doc['source']}",
-                    )
+                    file_checked = st.checkbox(f"  📄 {doc['source']}", key=f"filter_file_{doc['source']}")
                     if file_checked and doc["source"] not in selected_sources:
                         selected_sources.append(doc["source"])
 
         if selected_sources:
             st.caption(f"Searching {len(selected_sources)} file(s)")
-        else:
-            st.caption("No files selected — will search all")
 
-    # Determine final filter
     source_filters = None if search_all or not selected_sources else selected_sources
 
     st.divider()
@@ -441,21 +390,20 @@ with st.sidebar:
     # ---- SETTINGS ----
     st.markdown("### ⚙️ Settings")
 
-    num_sources = st.slider(
-        "Context passages",
-        min_value=1,
-        max_value=20,
-        value=5,
-        help="Top-matching passages sent to the AI. System searches ALL chunks — "
-             "this controls how many best matches become context for answering.",
+    num_sources = st.slider("Context passages", min_value=1, max_value=20, value=5,
+        help="Top-matching passages sent to the AI.")
+
+    use_hybrid = st.toggle("Hybrid search", value=True,
+        help="Combines semantic + keyword search for better results.")
+
+    # Provider info
+    from configs.settings import settings as app_settings
+    st.markdown(
+        f'<div class="provider-badge">LLM: {app_settings.llm_provider} · '
+        f'Store: {app_settings.vector_store_provider}</div>',
+        unsafe_allow_html=True,
     )
 
-    use_hybrid = st.toggle(
-        "Hybrid search (semantic + keyword)",
-        value=True,
-        help="Combines meaning-based and keyword-based search for better results. "
-             "Turn off to use pure semantic search only.",
-    )
 
 # ---- Main Content ----
 st.markdown(
@@ -466,25 +414,22 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Welcome state
 if stats["total_chunks"] == 0 and not st.session_state.chat_history:
     st.markdown(
         """<div class="welcome-card">
             <h3>👋 Welcome</h3>
             <p>Upload a legal document using the sidebar to get started.<br>
-            Create collections to organize your documents by category.</p>
+            Create collections to organize documents by category.</p>
             <p style="opacity:0.4; font-size:0.85em; margin-top:16px;">
-                Supported formats: <strong>PDF, DOCX, TXT</strong>
+                Supported: <strong>PDF, DOCX, TXT</strong>
             </p>
         </div>""",
         unsafe_allow_html=True,
     )
 
-# Chat history
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-
         if message["role"] == "assistant" and "sources" in message:
             with st.expander(f"📚 View Sources ({len(message['sources'])})", expanded=False):
                 for i, src in enumerate(message["sources"], 1):
@@ -492,14 +437,12 @@ for message in st.session_state.chat_history:
                     st.markdown(
                         f"""<div class="source-box">
                             <strong>Passage {i}</strong> — {src["source"]}{coll_tag}, 
-                            Page {src["page"]} 
-                            (relevance: {src["relevance_score"]})<br>
+                            Page {src["page"]} (relevance: {src["relevance_score"]})<br>
                             <em>{src["text_preview"]}</em>
                         </div>""",
                         unsafe_allow_html=True,
                     )
 
-# Chat input
 if prompt := st.chat_input("💬 Ask anything about your documents..."):
     if stats["total_chunks"] == 0:
         st.warning("⚠️ Upload a document first.")
@@ -528,8 +471,7 @@ if prompt := st.chat_input("💬 Ask anything about your documents..."):
                     st.markdown(
                         f"""<div class="source-box">
                             <strong>Passage {i}</strong> — {src["source"]}{coll_tag}, 
-                            Page {src["page"]} 
-                            (relevance: {src["relevance_score"]})<br>
+                            Page {src["page"]} (relevance: {src["relevance_score"]})<br>
                             <em>{src["text_preview"]}</em>
                         </div>""",
                         unsafe_allow_html=True,

@@ -14,13 +14,15 @@ from pydantic import BaseModel
 
 from src.ingestion.parser import DocumentParser
 from src.ingestion.chunker import TextChunker
-from src.retrieval.vector_store import VectorStore
+from src.retrieval.store_provider import get_vector_store
 from src.chains.rag_chain import RAGChain
+from configs.settings import settings
 
 app = FastAPI(
     title="Legal Document Q&A",
-    description="RAG-powered Q&A system with collection-based document management.",
-    version="0.6.0",
+    description="RAG-powered Q&A system with collection-based document management. "
+                f"Vector store: {settings.vector_store_provider}",
+    version="0.7.0",
 )
 
 app.add_middleware(
@@ -33,7 +35,7 @@ app.add_middleware(
 
 parser = DocumentParser()
 chunker = TextChunker()
-vector_store = VectorStore()
+vector_store = get_vector_store()
 rag_chain = RAGChain()
 
 UPLOAD_DIR = Path("data/uploads")
@@ -53,6 +55,7 @@ class AskRequest(BaseModel):
     k: int = 5
     session_id: str = "default"
     source_filters: list[str] | None = None
+    use_hybrid: bool = True
 
 
 # --- Endpoints ---
@@ -61,8 +64,10 @@ class AskRequest(BaseModel):
 async def root():
     return {
         "app": "Legal Document Q&A (RAG)",
-        "version": "0.6.0",
+        "version": "0.7.0",
         "status": "running",
+        "vector_store": settings.vector_store_provider,
+        "llm_provider": settings.llm_provider,
         "docs": "/docs",
     }
 
@@ -74,8 +79,8 @@ async def health_check():
         "status": "healthy",
         "components": {
             "api": "up",
-            "vector_store": "up",
-            "llm": "up",
+            "vector_store": f"up ({settings.vector_store_provider})",
+            "llm": f"up ({settings.llm_provider})",
             "total_chunks_stored": stats["total_chunks"],
             "total_documents": stats["total_documents"],
             "total_collections": stats["total_collections"],
@@ -89,10 +94,7 @@ async def upload_document(
     collection: str = Query(..., description="Collection/folder name (required)"),
     force: bool = Query(default=False, description="Overwrite if document already exists"),
 ):
-    """
-    Upload a legal document into a specific collection.
-    Collection is required — every document must belong to a folder.
-    """
+    """Upload a legal document into a specific collection."""
     file_ext = Path(file.filename).suffix.lower()
     if file_ext not in DocumentParser.SUPPORTED_EXTENSIONS:
         raise HTTPException(
@@ -107,8 +109,7 @@ async def upload_document(
     if not force and vector_store.document_exists(file.filename):
         raise HTTPException(
             status_code=409,
-            detail=f"Document '{file.filename}' already exists. "
-                   f"Use force=true to overwrite.",
+            detail=f"Document '{file.filename}' already exists. Use force=true to overwrite.",
         )
 
     if force and vector_store.document_exists(file.filename):
@@ -140,33 +141,25 @@ async def upload_document(
         "pages_extracted": len(documents),
         "chunks_created": len(chunks),
         "chunks_stored": num_stored,
+        "vector_store": settings.vector_store_provider,
         "message": f"Stored '{file.filename}' in '{collection}' ({num_stored} chunks).",
     }
 
 
 @app.get("/collections")
 async def list_collections():
-    """List all collections with their documents and chunk counts."""
     collections = vector_store.list_collections()
-    return {
-        "total_collections": len(collections),
-        "collections": collections,
-    }
+    return {"total_collections": len(collections), "collections": collections}
 
 
 @app.get("/documents")
 async def list_documents():
-    """List all uploaded documents (flat list with collection info)."""
     documents = vector_store.list_documents()
-    return {
-        "total_documents": len(documents),
-        "documents": documents,
-    }
+    return {"total_documents": len(documents), "documents": documents}
 
 
 @app.delete("/documents/{filename}")
 async def delete_document(filename: str):
-    """Delete a specific document and all its chunks."""
     if not vector_store.document_exists(filename):
         raise HTTPException(status_code=404, detail=f"Document '{filename}' not found.")
 
@@ -174,28 +167,19 @@ async def delete_document(filename: str):
     file_path = UPLOAD_DIR / filename
     file_path.unlink(missing_ok=True)
 
-    return {
-        "message": f"Deleted '{filename}' ({num_deleted} chunks removed).",
-        "chunks_deleted": num_deleted,
-    }
+    return {"message": f"Deleted '{filename}' ({num_deleted} chunks removed).", "chunks_deleted": num_deleted}
 
 
 @app.delete("/collections/{collection_name}")
 async def delete_collection_group(collection_name: str):
-    """Delete all documents in a collection."""
     num_deleted = vector_store.delete_collection_group(collection_name)
     if num_deleted == 0:
         raise HTTPException(status_code=404, detail=f"Collection '{collection_name}' not found.")
-
-    return {
-        "message": f"Deleted collection '{collection_name}' ({num_deleted} chunks removed).",
-        "chunks_deleted": num_deleted,
-    }
+    return {"message": f"Deleted collection '{collection_name}' ({num_deleted} chunks).", "chunks_deleted": num_deleted}
 
 
 @app.post("/search")
 async def search_documents(request: SearchRequest):
-    """Semantic search with optional multi-source filtering."""
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
@@ -209,17 +193,11 @@ async def search_documents(request: SearchRequest):
         source_filters=request.source_filters,
     )
 
-    return {
-        "query": request.query,
-        "source_filters": request.source_filters,
-        "num_results": len(results),
-        "results": results,
-    }
+    return {"query": request.query, "source_filters": request.source_filters, "num_results": len(results), "results": results}
 
 
 @app.post("/ask")
 async def ask_question(request: AskRequest):
-    """Ask a question with optional multi-source filtering."""
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
@@ -232,6 +210,7 @@ async def ask_question(request: AskRequest):
         k=request.k,
         session_id=request.session_id,
         source_filters=request.source_filters,
+        use_hybrid=request.use_hybrid,
     )
 
     return result
@@ -240,11 +219,7 @@ async def ask_question(request: AskRequest):
 @app.get("/history/{session_id}")
 async def get_conversation_history(session_id: str):
     history = rag_chain.get_memory(session_id)
-    return {
-        "session_id": session_id,
-        "num_messages": len(history),
-        "messages": history,
-    }
+    return {"session_id": session_id, "num_messages": len(history), "messages": history}
 
 
 @app.delete("/history/{session_id}")

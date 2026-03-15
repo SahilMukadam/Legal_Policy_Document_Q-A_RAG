@@ -1,10 +1,9 @@
 """
 Application configuration loaded from environment variables.
-Uses pydantic-settings for type-safe config management.
 
-Supports multiple LLM providers — switch by changing LLM_PROVIDER in .env:
-  - "gemini"    → Google Gemini (free tier)
-  - "anthropic" → Claude API (paid, swap in for final demo)
+Supports:
+    - LLM providers: "gemini" or "anthropic"
+    - Vector store providers: "chroma" or "pinecone"
 """
 
 from pydantic_settings import BaseSettings
@@ -17,7 +16,7 @@ class Settings(BaseSettings):
     # LLM Provider: "gemini" or "anthropic"
     llm_provider: str = Field(default="gemini")
 
-    # API Keys (only the active provider's key is required)
+    # API Keys
     google_api_key: str = Field(default="")
     anthropic_api_key: str = Field(default="")
 
@@ -26,9 +25,16 @@ class Settings(BaseSettings):
     app_port: int = Field(default=8000)
     log_level: str = Field(default="INFO")
 
+    # Vector Store Provider: "chroma" or "pinecone"
+    vector_store_provider: str = Field(default="chroma")
+
     # ChromaDB
     chroma_persist_dir: str = Field(default="./chroma_data")
     chroma_collection_name: str = Field(default="legal_docs")
+
+    # Pinecone
+    pinecone_api_key: str = Field(default="")
+    pinecone_index_name: str = Field(default="legal-doc-qa")
 
     # Embedding
     embedding_model: str = Field(default="all-MiniLM-L6-v2")
@@ -38,12 +44,12 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(default=200)
 
     # Model names per provider
-    gemini_model: str = Field(default="gemini-2.5-flash-lite")
+    gemini_model: str = Field(default="gemini-2.5-flash")
     claude_model: str = Field(default="claude-sonnet-4-20250514")
     max_tokens: int = Field(default=2048)
 
     # Retrieval
-    top_k: int = Field(default=5, description="Number of chunks to retrieve")
+    top_k: int = Field(default=5)
 
     model_config = {
         "env_file": ".env",
@@ -52,5 +58,4 @@ class Settings(BaseSettings):
     }
 
 
-# Singleton instance — import this throughout the app
 settings = Settings()
