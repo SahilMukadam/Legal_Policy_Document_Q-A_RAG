@@ -284,10 +284,12 @@ with st.sidebar:
                     with col2:
                         if st.button("🗑️", key=f"del_{doc['source']}", help=f"Delete {doc['source']}"):
                             vector_store.delete_document(doc["source"])
+                            rag_chain.invalidate_caches()
                             st.rerun()
 
                 if st.button(f"🗑️ Delete '{coll_name}'", key=f"delcoll_{coll_name}", use_container_width=True):
                     vector_store.delete_collection_group(coll_name)
+                    rag_chain.invalidate_caches()
                     st.rerun()
     else:
         st.caption("No documents yet.")
@@ -342,6 +344,7 @@ with st.sidebar:
                     try:
                         if already_exists and overwrite:
                             vector_store.delete_document(uploaded_file.name)
+                            rag_chain.invalidate_caches()
                         elif already_exists and not overwrite:
                             st.error("Check 'Overwrite' to replace.")
                             st.stop()
@@ -351,6 +354,7 @@ with st.sidebar:
                         num_stored = vector_store.add_chunks(
                             chunks, doc_id=uploaded_file.name, collection_name=collection_name,
                         )
+                        rag_chain.invalidate_caches()
                         st.session_state.upload_complete = True
                         st.rerun()
                     except Exception as e:

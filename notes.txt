@@ -28,3 +28,4 @@ Press Ctrl+C in the terminal to stop the server.
 - the model fails to give summary of the document when asked. it says no such data found. which means 
   the document is answering me to my questions based on individual chunks of data and not co-relating the chunks and finding meaning in them.
   maybe if i set it to "self.vector_store.search(query=question,k=k,source_filters=None,)". then it may resolve
+- how to clear all data to make the app fresh to use ?

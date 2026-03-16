@@ -50,6 +50,7 @@ class RAGEvaluator:
         # Remove existing eval data to start fresh
         if self.vector_store.document_exists("eval_lease.txt"):
             self.vector_store.delete_document("eval_lease.txt")
+            self.rag_chain.invalidate_caches()
 
         # Parse, chunk, store
         documents = self.parser.parse(str(eval_path))

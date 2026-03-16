@@ -20,9 +20,8 @@ from configs.settings import settings
 
 app = FastAPI(
     title="Legal Document Q&A",
-    description="RAG-powered Q&A system with collection-based document management. "
-                f"Vector store: {settings.vector_store_provider}",
-    version="0.7.0",
+    description="RAG-powered Q&A system with caching, hybrid search, and collection management.",
+    version="0.8.0",
 )
 
 app.add_middleware(
@@ -64,7 +63,7 @@ class AskRequest(BaseModel):
 async def root():
     return {
         "app": "Legal Document Q&A (RAG)",
-        "version": "0.7.0",
+        "version": "0.8.0",
         "status": "running",
         "vector_store": settings.vector_store_provider,
         "llm_provider": settings.llm_provider,
@@ -114,6 +113,7 @@ async def upload_document(
 
     if force and vector_store.document_exists(file.filename):
         vector_store.delete_document(file.filename)
+        rag_chain.invalidate_caches()
 
     file_path = UPLOAD_DIR / file.filename
     try:
@@ -134,6 +134,9 @@ async def upload_document(
         doc_id=file.filename,
         collection_name=collection.strip(),
     )
+
+    # Invalidate caches — document set changed
+    rag_chain.invalidate_caches()
 
     return {
         "filename": file.filename,
@@ -167,6 +170,9 @@ async def delete_document(filename: str):
     file_path = UPLOAD_DIR / filename
     file_path.unlink(missing_ok=True)
 
+    # Invalidate caches
+    rag_chain.invalidate_caches()
+
     return {"message": f"Deleted '{filename}' ({num_deleted} chunks removed).", "chunks_deleted": num_deleted}
 
 
@@ -175,6 +181,10 @@ async def delete_collection_group(collection_name: str):
     num_deleted = vector_store.delete_collection_group(collection_name)
     if num_deleted == 0:
         raise HTTPException(status_code=404, detail=f"Collection '{collection_name}' not found.")
+
+    # Invalidate caches
+    rag_chain.invalidate_caches()
+
     return {"message": f"Deleted collection '{collection_name}' ({num_deleted} chunks).", "chunks_deleted": num_deleted}
 
 
@@ -230,10 +240,16 @@ async def clear_conversation_history(session_id: str):
 
 @app.get("/stats")
 async def get_stats():
-    return vector_store.get_stats()
+    store_stats = vector_store.get_stats()
+    cache_stats = rag_chain.get_cache_stats()
+    return {
+        **store_stats,
+        "cache": cache_stats,
+    }
 
 
 @app.delete("/reset")
 async def reset_database():
     vector_store.delete_collection()
+    rag_chain.invalidate_caches()
     return {"message": "Vector store cleared. All documents deleted."}

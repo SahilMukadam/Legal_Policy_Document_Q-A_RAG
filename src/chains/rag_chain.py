@@ -1,12 +1,13 @@
 """
 RAG Chain Module with Conversation Memory, Multi-Source Filtering,
-and Hybrid Search. Uses vector store provider factory for swappable backends.
+Hybrid Search, and Response Caching.
 """
 
 import time
 from src.retrieval.store_provider import get_vector_store
 from src.retrieval.hybrid_search import HybridSearch
 from src.llm_provider import get_llm
+from src.utils.cache import ResponseCache
 
 
 SYSTEM_PROMPT = """You are a precise legal document assistant. Your job is to answer 
@@ -39,13 +40,19 @@ Provide a clear answer based on the context above, with source citations."""
 
 
 class RAGChain:
-    """RAG chain with memory, multi-source filtering, and hybrid search."""
+    """RAG chain with memory, filtering, hybrid search, and caching."""
 
     def __init__(self):
         self.vector_store = get_vector_store()
         self.hybrid_search = HybridSearch(self.vector_store)
         self.llm = get_llm()
         self._memory: dict[str, list[dict]] = {}
+
+        # Cache for search results (shorter TTL — documents might change)
+        self.search_cache = ResponseCache(ttl_seconds=120, max_size=200)
+
+        # Cache for RAG answers (longer TTL — same question = same answer)
+        self.answer_cache = ResponseCache(ttl_seconds=300, max_size=100)
 
     def _get_history(self, session_id: str) -> list[dict]:
         return self._memory.get(session_id, [])
@@ -131,28 +138,46 @@ class RAGChain:
     ) -> dict:
         """
         Ask a question about the uploaded documents.
-
-        Args:
-            question: Natural language question.
-            k: Number of context chunks to retrieve.
-            session_id: Conversation session ID for memory.
-            source_filters: Optional list of filenames to restrict search.
-            use_hybrid: Use hybrid search (semantic + keyword). Default True.
+        Results are cached to avoid redundant LLM calls.
         """
         search_query = self._build_search_query(question, session_id)
 
-        if use_hybrid:
-            results = self.hybrid_search.search(
-                query=search_query,
-                k=k,
-                source_filters=source_filters,
-            )
+        # Build cache key from all parameters that affect the result
+        filters_key = ",".join(sorted(source_filters)) if source_filters else "all"
+        history_key = str(len(self._get_history(session_id)))
+        cache_key = ResponseCache._make_key(
+            search_query, k, filters_key, use_hybrid, history_key
+        )
+
+        # Check answer cache (skip for conversations with history — answers depend on context)
+        if not self._get_history(session_id):
+            cached_answer = self.answer_cache.get(cache_key)
+            if cached_answer:
+                cached_answer["cached"] = True
+                return cached_answer
+
+        # Search (with search cache)
+        search_cache_key = ResponseCache._make_key(search_query, k, filters_key, use_hybrid)
+        cached_search = self.search_cache.get(search_cache_key)
+
+        if cached_search:
+            results = cached_search
         else:
-            results = self.vector_store.search(
-                query=search_query,
-                k=k,
-                source_filters=source_filters,
-            )
+            if use_hybrid:
+                results = self.hybrid_search.search(
+                    query=search_query,
+                    k=k,
+                    source_filters=source_filters,
+                )
+            else:
+                results = self.vector_store.search(
+                    query=search_query,
+                    k=k,
+                    source_filters=source_filters,
+                )
+            # Cache search results
+            if results:
+                self.search_cache.set(search_cache_key, results)
 
         if not results:
             msg = "No documents have been uploaded yet." if not source_filters else \
@@ -164,6 +189,7 @@ class RAGChain:
                 "num_sources": 0,
                 "session_id": session_id,
                 "source_filters": source_filters,
+                "cached": False,
             }
 
         context = self._format_context(results)
@@ -199,13 +225,32 @@ class RAGChain:
 
         sources = self._extract_sources(results)
 
-        return {
+        result = {
             "answer": response.content,
             "sources": sources,
             "query": question,
             "num_sources": len(sources),
             "session_id": session_id,
             "source_filters": source_filters,
+            "cached": False,
+        }
+
+        # Cache the answer (only for first-time questions without history)
+        if not self._get_history(session_id) or len(self._get_history(session_id)) <= 2:
+            self.answer_cache.set(cache_key, result)
+
+        return result
+
+    def invalidate_caches(self):
+        """Clear all caches. Call after uploading/deleting documents."""
+        self.search_cache.clear()
+        self.answer_cache.clear()
+
+    def get_cache_stats(self) -> dict:
+        """Return cache statistics."""
+        return {
+            "search_cache": self.search_cache.stats(),
+            "answer_cache": self.answer_cache.stats(),
         }
 
     def clear_memory(self, session_id: str = "default"):
