@@ -18,7 +18,7 @@ RULES:
 2. If the context doesn't contain enough information to answer, say 
    "I cannot find this information in the uploaded documents."
 3. After your answer, cite which source(s) you used in this format:
-   [Source: filename, Page X]
+   [Source: filename, Section name, Page X]
 4. Keep answers clear, concise, and professional.
 5. If multiple context passages are relevant, synthesize them into one coherent answer.
 6. Quote specific phrases from the documents when relevant, using quotation marks.
@@ -36,7 +36,7 @@ QUERY_TEMPLATE = """Context passages from uploaded legal documents:
 
 Current Question: {question}
 
-Provide a clear answer based on the context above, with source citations."""
+Provide a clear answer based on the context above, with source citations including the section name."""
 
 
 class RAGChain:
@@ -48,10 +48,7 @@ class RAGChain:
         self.llm = get_llm()
         self._memory: dict[str, list[dict]] = {}
 
-        # Cache for search results (shorter TTL — documents might change)
         self.search_cache = ResponseCache(ttl_seconds=120, max_size=200)
-
-        # Cache for RAG answers (longer TTL — same question = same answer)
         self.answer_cache = ResponseCache(ttl_seconds=300, max_size=100)
 
     def _get_history(self, session_id: str) -> list[dict]:
@@ -89,13 +86,20 @@ class RAGChain:
         for i, result in enumerate(results, start=1):
             source = result["metadata"].get("source", "Unknown")
             page = result["metadata"].get("page", "N/A")
+            section = result["metadata"].get("section", "")
             collection = result["metadata"].get("collection", "")
             score = result.get("score", 0)
             search_type = result.get("search_type", "semantic")
 
+            location = f"Source: {source}"
+            if section:
+                location += f", Section: {section}"
+            if collection:
+                location += f", Collection: {collection}"
+            location += f", Page: {page}, Relevance: {score:.4f}, Method: {search_type}"
+
             context_parts.append(
-                f"[Passage {i}] (Source: {source}, Collection: {collection}, "
-                f"Page: {page}, Relevance: {score:.4f}, Method: {search_type})\n{result['text']}"
+                f"[Passage {i}] ({location})\n{result['text']}"
             )
 
         return "\n\n".join(context_parts)
@@ -103,15 +107,40 @@ class RAGChain:
     def _extract_sources(self, results: list[dict]) -> list[dict]:
         sources = []
         for result in results:
+            meta = result["metadata"]
+
+            # Build location breadcrumb
+            breadcrumb_parts = []
+            if meta.get("collection"):
+                breadcrumb_parts.append(meta["collection"])
+            breadcrumb_parts.append(meta.get("source", "Unknown"))
+            if meta.get("section") and meta["section"] != "Introduction":
+                breadcrumb_parts.append(meta["section"])
+
+            # Build line info
+            line_info = ""
+            line_start = meta.get("line_start")
+            line_end = meta.get("line_end")
+            if line_start and line_end:
+                if line_start == line_end:
+                    line_info = f"Line {line_start}"
+                else:
+                    line_info = f"Lines {line_start}-{line_end}"
+
             sources.append({
-                "source": result["metadata"].get("source", "Unknown"),
-                "page": result["metadata"].get("page", "N/A"),
-                "collection": result["metadata"].get("collection", "General"),
-                "chunk_index": result["metadata"].get("chunk_index", "N/A"),
+                "source": meta.get("source", "Unknown"),
+                "page": meta.get("page", "N/A"),
+                "section": meta.get("section", ""),
+                "collection": meta.get("collection", "General"),
+                "chunk_index": meta.get("chunk_index", "N/A"),
+                "line_info": line_info,
+                "breadcrumb": " > ".join(breadcrumb_parts),
+                "context_before": meta.get("context_before", ""),
+                "context_after": meta.get("context_after", ""),
                 "relevance_score": round(result.get("score", 0), 4),
                 "search_type": result.get("search_type", "semantic"),
-                "text_preview": result["text"][:150] + "..."
-                    if len(result["text"]) > 150
+                "text_preview": result["text"][:200] + "..."
+                    if len(result["text"]) > 200
                     else result["text"],
             })
         return sources
@@ -136,27 +165,21 @@ class RAGChain:
         source_filters: list[str] | None = None,
         use_hybrid: bool = True,
     ) -> dict:
-        """
-        Ask a question about the uploaded documents.
-        Results are cached to avoid redundant LLM calls.
-        """
+        """Ask a question about the uploaded documents."""
         search_query = self._build_search_query(question, session_id)
 
-        # Build cache key from all parameters that affect the result
         filters_key = ",".join(sorted(source_filters)) if source_filters else "all"
         history_key = str(len(self._get_history(session_id)))
         cache_key = ResponseCache._make_key(
             search_query, k, filters_key, use_hybrid, history_key
         )
 
-        # Check answer cache (skip for conversations with history — answers depend on context)
         if not self._get_history(session_id):
             cached_answer = self.answer_cache.get(cache_key)
             if cached_answer:
                 cached_answer["cached"] = True
                 return cached_answer
 
-        # Search (with search cache)
         search_cache_key = ResponseCache._make_key(search_query, k, filters_key, use_hybrid)
         cached_search = self.search_cache.get(search_cache_key)
 
@@ -165,17 +188,12 @@ class RAGChain:
         else:
             if use_hybrid:
                 results = self.hybrid_search.search(
-                    query=search_query,
-                    k=k,
-                    source_filters=source_filters,
+                    query=search_query, k=k, source_filters=source_filters,
                 )
             else:
                 results = self.vector_store.search(
-                    query=search_query,
-                    k=k,
-                    source_filters=source_filters,
+                    query=search_query, k=k, source_filters=source_filters,
                 )
-            # Cache search results
             if results:
                 self.search_cache.set(search_cache_key, results)
 
@@ -235,19 +253,16 @@ class RAGChain:
             "cached": False,
         }
 
-        # Cache the answer (only for first-time questions without history)
         if not self._get_history(session_id) or len(self._get_history(session_id)) <= 2:
             self.answer_cache.set(cache_key, result)
 
         return result
 
     def invalidate_caches(self):
-        """Clear all caches. Call after uploading/deleting documents."""
         self.search_cache.clear()
         self.answer_cache.clear()
 
     def get_cache_stats(self) -> dict:
-        """Return cache statistics."""
         return {
             "search_cache": self.search_cache.stats(),
             "answer_cache": self.answer_cache.stats(),

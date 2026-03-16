@@ -8,6 +8,7 @@ import streamlit as st
 import sys
 import os
 import uuid
+import shutil
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -35,9 +36,11 @@ st.markdown("""
         padding-top: 1rem !important;
     }
 
+    /* ===== SIDEBAR ===== */
     [data-testid="stSidebar"] {
         min-width: 340px !important;
         max-width: 380px !important;
+        transition: min-width 0.3s ease, max-width 0.3s ease !important;
     }
 
     [data-testid="stSidebar"] > div:first-child {
@@ -47,6 +50,44 @@ st.markdown("""
         border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
     }
 
+    /* ===== COLLAPSED SIDEBAR — show icon strip ===== */
+    [data-testid="stSidebar"][aria-expanded="false"] {
+        min-width: 60px !important;
+        max-width: 60px !important;
+    }
+
+    [data-testid="stSidebar"][aria-expanded="false"] > div:first-child {
+        width: 60px !important;
+        overflow: hidden !important;
+    }
+
+    /* Hide text content when collapsed, show only the collapse button area */
+    [data-testid="stSidebar"][aria-expanded="false"] .stMarkdown,
+    [data-testid="stSidebar"][aria-expanded="false"] .stDivider,
+    [data-testid="stSidebar"][aria-expanded="false"] .stSelectbox,
+    [data-testid="stSidebar"][aria-expanded="false"] .stSlider,
+    [data-testid="stSidebar"][aria-expanded="false"] .stCheckbox,
+    [data-testid="stSidebar"][aria-expanded="false"] .stFileUploader,
+    [data-testid="stSidebar"][aria-expanded="false"] .stTextInput,
+    [data-testid="stSidebar"][aria-expanded="false"] .stExpander,
+    [data-testid="stSidebar"][aria-expanded="false"] [data-testid="stMetricValue"],
+    [data-testid="stSidebar"][aria-expanded="false"] .stToggle {
+        display: none !important;
+    }
+
+    /* Keep buttons visible but compact when collapsed */
+    [data-testid="stSidebar"][aria-expanded="false"] .stButton > button {
+        padding: 8px !important;
+        font-size: 0 !important;
+        min-height: 40px !important;
+        width: 44px !important;
+        margin: 4px auto !important;
+        display: flex !important;
+        justify-content: center !important;
+        align-items: center !important;
+    }
+
+    /* ===== SOURCE BOXES ===== */
     .source-box {
         background: rgba(100, 140, 200, 0.1) !important;
         border-left: 3px solid #5b9bf5 !important;
@@ -60,6 +101,7 @@ st.markdown("""
     .source-box strong { color: #5b9bf5 !important; }
     .source-box em { color: inherit !important; opacity: 0.85; }
 
+    /* ===== DOCUMENT CARDS ===== */
     .doc-item {
         background: rgba(255, 255, 255, 0.05) !important;
         border: 1px solid rgba(255, 255, 255, 0.08) !important;
@@ -72,6 +114,7 @@ st.markdown("""
     .doc-item .doc-name { font-weight: 500 !important; font-size: 0.85em !important; color: inherit !important; }
     .doc-item .doc-meta { font-size: 0.7em !important; opacity: 0.5 !important; color: inherit !important; }
 
+    /* ===== METRICS ===== */
     .metric-row { display: flex; gap: 10px; margin: 10px 0; }
 
     .metric-badge {
@@ -87,6 +130,7 @@ st.markdown("""
     .metric-badge .metric-value { font-size: 1.4em !important; font-weight: 700 !important; color: #5b9bf5 !important; }
     .metric-badge .metric-label { font-size: 0.7em !important; opacity: 0.5 !important; color: inherit !important; }
 
+    /* ===== CHAT ===== */
     [data-testid="stChatMessage"] {
         background: rgba(255, 255, 255, 0.03) !important;
         border: 1px solid rgba(255, 255, 255, 0.06) !important;
@@ -129,6 +173,7 @@ st.markdown("""
         padding-top: 8px !important;
     }
 
+    /* ===== BUTTONS ===== */
     .stButton > button {
         border-radius: 12px !important;
         border: 1px solid rgba(255, 255, 255, 0.1) !important;
@@ -146,18 +191,32 @@ st.markdown("""
         font-weight: 600 !important;
     }
 
+    .danger-btn > button {
+        background: rgba(239, 68, 68, 0.1) !important;
+        border: 1px solid rgba(239, 68, 68, 0.25) !important;
+        color: inherit !important;
+    }
+
+    .danger-btn > button:hover {
+        background: rgba(239, 68, 68, 0.2) !important;
+        border: 1px solid rgba(239, 68, 68, 0.4) !important;
+    }
+
+    /* ===== FILE UPLOADER ===== */
     [data-testid="stFileUploader"] section {
         border-radius: 12px !important;
         border: 1px dashed rgba(91, 155, 245, 0.3) !important;
         background: rgba(91, 155, 245, 0.03) !important;
     }
 
+    /* ===== EXPANDER ===== */
     [data-testid="stExpander"] {
         border: 1px solid rgba(255, 255, 255, 0.08) !important;
         border-radius: 12px !important;
         background: rgba(255, 255, 255, 0.02) !important;
     }
 
+    /* ===== HEADER ===== */
     .app-header { text-align: center; padding: 16px 0 8px 0; }
 
     .app-header h1 {
@@ -207,8 +266,18 @@ st.markdown("""
         text-align: center !important;
         margin-top: 8px !important;
     }
+
+    .format-list {
+        font-size: 0.75em !important;
+        opacity: 0.4 !important;
+        margin-top: 4px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+
+# ---- All supported file extensions for the uploader ----
+SUPPORTED_UPLOAD_TYPES = ["pdf", "docx", "txt", "md", "json", "yaml", "yml", "xml", "html", "htm"]
 
 
 # ---- Initialize Components ----
@@ -227,6 +296,8 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "upload_complete" not in st.session_state:
     st.session_state.upload_complete = False
+if "confirm_reset" not in st.session_state:
+    st.session_state.confirm_reset = False
 
 
 # ---- Sidebar ----
@@ -320,45 +391,65 @@ with st.sidebar:
         else:
             collection_name = selected_collection
 
-        uploaded_file = st.file_uploader("Drop a file", type=["pdf", "docx", "txt"], label_visibility="collapsed")
+        uploaded_files = st.file_uploader(
+            "Drop files",
+            type=SUPPORTED_UPLOAD_TYPES,
+            label_visibility="collapsed",
+            accept_multiple_files=True,
+        )
 
-        if uploaded_file:
-            already_exists = vector_store.document_exists(uploaded_file.name)
-            if already_exists:
-                st.warning(f"'{uploaded_file.name}' exists.")
-                overwrite = st.checkbox("Overwrite?", key="overwrite")
-            else:
-                overwrite = False
+        st.markdown(
+            '<div class="format-list">PDF, DOCX, TXT, MD, JSON, YAML, XML, HTML</div>',
+            unsafe_allow_html=True,
+        )
 
+        if uploaded_files:
             can_upload = bool(collection_name)
             if not collection_name:
                 st.error("Enter a collection name.")
 
             if st.button("📤 Process", type="primary", use_container_width=True, disabled=not can_upload):
-                with st.spinner("Parsing & embedding..."):
+                total_stored = 0
+                errors = []
+
+                progress = st.progress(0, text="Processing files...")
+
+                for idx, uploaded_file in enumerate(uploaded_files):
+                    progress.progress(
+                        (idx) / len(uploaded_files),
+                        text=f"Processing {uploaded_file.name}..."
+                    )
+
+                    already_exists = vector_store.document_exists(uploaded_file.name)
+                    if already_exists:
+                        errors.append(f"'{uploaded_file.name}' already exists (skipped)")
+                        continue
+
                     temp_path = f"data/uploads/{uploaded_file.name}"
                     os.makedirs("data/uploads", exist_ok=True)
                     with open(temp_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
 
                     try:
-                        if already_exists and overwrite:
-                            vector_store.delete_document(uploaded_file.name)
-                            rag_chain.invalidate_caches()
-                        elif already_exists and not overwrite:
-                            st.error("Check 'Overwrite' to replace.")
-                            st.stop()
-
                         doc_pages = parser.parse(temp_path)
                         chunks = chunker.chunk(doc_pages)
                         num_stored = vector_store.add_chunks(
                             chunks, doc_id=uploaded_file.name, collection_name=collection_name,
                         )
-                        rag_chain.invalidate_caches()
-                        st.session_state.upload_complete = True
-                        st.rerun()
+                        total_stored += num_stored
                     except Exception as e:
-                        st.error(f"Error: {str(e)}")
+                        errors.append(f"'{uploaded_file.name}': {str(e)}")
+
+                progress.progress(1.0, text="Done!")
+                rag_chain.invalidate_caches()
+
+                if errors:
+                    for err in errors:
+                        st.warning(err)
+
+                if total_stored > 0:
+                    st.session_state.upload_complete = True
+                    st.rerun()
 
     st.divider()
 
@@ -400,6 +491,44 @@ with st.sidebar:
     use_hybrid = st.toggle("Hybrid search", value=True,
         help="Combines semantic + keyword search for better results.")
 
+    st.divider()
+
+    # ---- RESET ALL DATA ----
+    st.markdown("### 🔧 Maintenance")
+
+    if not st.session_state.confirm_reset:
+        st.markdown('<div class="danger-btn">', unsafe_allow_html=True)
+        if st.button("🗑️ Reset All Data", use_container_width=True):
+            st.session_state.confirm_reset = True
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        st.warning("⚠️ This will delete ALL documents, collections, conversations, and caches. This cannot be undone.")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Confirm", type="primary", use_container_width=True):
+                # Clear vector store
+                vector_store.delete_collection()
+                # Clear caches
+                rag_chain.invalidate_caches()
+                # Clear conversation memory
+                rag_chain.clear_memory(st.session_state.session_id)
+                # Clear uploaded files
+                upload_dir = "data/uploads"
+                if os.path.exists(upload_dir):
+                    shutil.rmtree(upload_dir)
+                    os.makedirs(upload_dir)
+                # Clear session state
+                st.session_state.chat_history = []
+                st.session_state.session_id = str(uuid.uuid4())[:8]
+                st.session_state.confirm_reset = False
+                st.session_state.upload_complete = False
+                st.rerun()
+        with col2:
+            if st.button("❌ Cancel", use_container_width=True):
+                st.session_state.confirm_reset = False
+                st.rerun()
+
     # Provider info
     from configs.settings import settings as app_settings
     st.markdown(
@@ -425,7 +554,7 @@ if stats["total_chunks"] == 0 and not st.session_state.chat_history:
             <p>Upload a legal document using the sidebar to get started.<br>
             Create collections to organize documents by category.</p>
             <p style="opacity:0.4; font-size:0.85em; margin-top:16px;">
-                Supported: <strong>PDF, DOCX, TXT</strong>
+                Supported: <strong>PDF, DOCX, TXT, MD, JSON, YAML, XML, HTML</strong>
             </p>
         </div>""",
         unsafe_allow_html=True,
@@ -437,19 +566,22 @@ for message in st.session_state.chat_history:
         if message["role"] == "assistant" and "sources" in message:
             with st.expander(f"📚 View Sources ({len(message['sources'])})", expanded=False):
                 for i, src in enumerate(message["sources"], 1):
-                    coll_tag = f" [{src.get('collection', '')}]" if src.get('collection') else ""
+                    section_tag = f' > {src.get("section", "")}' if src.get("section") and src["section"] != "Introduction" else ""
+                    line_tag = f' · {src.get("line_info", "")}' if src.get("line_info") else ""
+                    breadcrumb = src.get("breadcrumb", src["source"])
                     st.markdown(
                         f"""<div class="source-box">
-                            <strong>Passage {i}</strong> — {src["source"]}{coll_tag}, 
-                            Page {src["page"]} (relevance: {src["relevance_score"]})<br>
-                            <em>{src["text_preview"]}</em>
+                            <strong>Passage {i}</strong><br>
+                            <span style="color: #5b9bf5; font-size: 0.85em;">📍 {breadcrumb}</span><br>
+                            <span style="opacity: 0.6; font-size: 0.8em;">Page {src["page"]}{line_tag} · Relevance: {int(src["relevance_score"] * 100)}% · {src.get("search_type", "semantic")}</span><br>
+                            <em style="font-size: 0.9em;">{src["text_preview"]}</em>
                         </div>""",
                         unsafe_allow_html=True,
                     )
 
-if prompt := st.chat_input("💬 Ask anything about your documents..."):
+if prompt := st.chat_input("Ask anything about your documents..."):
     if stats["total_chunks"] == 0:
-        st.warning("⚠️ Upload a document first.")
+        st.warning("Upload a document first.")
         st.stop()
 
     st.session_state.chat_history.append({"role": "user", "content": prompt})
@@ -471,12 +603,15 @@ if prompt := st.chat_input("💬 Ask anything about your documents..."):
         if result["sources"]:
             with st.expander(f"📚 View Sources ({result['num_sources']})", expanded=False):
                 for i, src in enumerate(result["sources"], 1):
-                    coll_tag = f" [{src.get('collection', '')}]" if src.get('collection') else ""
+                    section_tag = f' > {src.get("section", "")}' if src.get("section") and src["section"] != "Introduction" else ""
+                    line_tag = f' · {src.get("line_info", "")}' if src.get("line_info") else ""
+                    breadcrumb = src.get("breadcrumb", src["source"])
                     st.markdown(
                         f"""<div class="source-box">
-                            <strong>Passage {i}</strong> — {src["source"]}{coll_tag}, 
-                            Page {src["page"]} (relevance: {src["relevance_score"]})<br>
-                            <em>{src["text_preview"]}</em>
+                            <strong>Passage {i}</strong><br>
+                            <span style="color: #5b9bf5; font-size: 0.85em;">📍 {breadcrumb}</span><br>
+                            <span style="opacity: 0.6; font-size: 0.8em;">Page {src["page"]}{line_tag} · Relevance: {int(src["relevance_score"] * 100)}% · {src.get("search_type", "semantic")}</span><br>
+                            <em style="font-size: 0.9em;">{src["text_preview"]}</em>
                         </div>""",
                         unsafe_allow_html=True,
                     )
