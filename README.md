@@ -1,4 +1,4 @@
-# ⚖️ Legal/Policy Document Q&A — RAG System
+# ⚖️ Legal/Policy Document Q&A - RAG System
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
@@ -9,7 +9,7 @@
 
 > Upload legal documents. Ask questions in plain English. Get accurate, cited answers from the source text.
 
-A production-quality **Retrieval-Augmented Generation (RAG)** system built for legal and policy document analysis. Upload contracts, privacy policies, or terms of service — the system parses, embeds, and stores them, then answers your questions with citations pointing to exact source passages.
+A production-quality **Retrieval-Augmented Generation (RAG)** system built for legal and policy document analysis. Upload contracts, privacy policies, or terms of service - the system parses, embeds, and stores them, then answers your questions with citations pointing to exact source passages.
 
 ---
 
@@ -18,25 +18,25 @@ A production-quality **Retrieval-Augmented Generation (RAG)** system built for l
 **Document Intelligence**
 - Multi-format support (PDF, DOCX, TXT) with automatic text extraction
 - Smart chunking with configurable overlap for optimal retrieval
-- Collection-based organization — group documents into folders
+- Collection-based organization - group documents into folders
 
 **Advanced Search**
 - Hybrid search combining semantic (meaning-based) and keyword (BM25) retrieval
 - Reciprocal Rank Fusion merges both search methods for best results
-- Source filtering — restrict answers to specific documents or collections
+- Source filtering - restrict answers to specific documents or collections
 
 **Cited Answers**
 - Every answer includes source citations with document name and page number
 - Expandable source passages so users can verify answers
-- Faithfulness-aware — system only answers from provided context
+- Faithfulness-aware - system only answers from provided context
 
 **Conversation Memory**
-- Multi-turn Q&A — ask follow-up questions naturally
-- Session-based isolation — multiple users don't mix contexts
-- Context-enhanced retrieval — follow-ups search using conversation history
+- Multi-turn Q&A - ask follow-up questions naturally
+- Session-based isolation - multiple users don't mix contexts
+- Context-enhanced retrieval - follow-ups search using conversation history
 
 **Production Features**
-- Response caching with TTL — repeated questions answered instantly
+- Response caching with TTL - repeated questions answered instantly
 - Swappable LLM backend (Gemini ↔ Claude, one config change)
 - Swappable vector store (ChromaDB ↔ Pinecone, one config change)
 - Duplicate detection and document lifecycle management
@@ -115,7 +115,7 @@ A production-quality **Retrieval-Augmented Generation (RAG)** system built for l
 
 ### Prerequisites
 - Python 3.11+
-- Google Gemini API key ([free — get it here](https://aistudio.google.com/apikey))
+- Google Gemini API key ([free - get it here](https://aistudio.google.com/apikey))
 
 ### Setup
 
@@ -159,11 +159,11 @@ pytest tests/ -v  # 60+ tests
 
 ### Via Streamlit UI
 
-1. **Upload** — Select or create a collection, drop a PDF/DOCX/TXT file
-2. **Ask** — Type a question in the chat input
-3. **Verify** — Expand "View Sources" to see the exact passages used
-4. **Filter** — Use "Search Scope" to restrict answers to specific documents
-5. **Follow up** — Ask follow-up questions naturally — the system remembers context
+1. **Upload** - Select or create a collection, drop a PDF/DOCX/TXT file
+2. **Ask** - Type a question in the chat input
+3. **Verify** - Expand "View Sources" to see the exact passages used
+4. **Filter** - Use "Search Scope" to restrict answers to specific documents
+5. **Follow up** - Ask follow-up questions naturally - the system remembers context
 
 ### Via REST API
 
@@ -195,7 +195,7 @@ curl http://localhost:8000/stats
 
 ## 🔄 Swappable Providers
 
-Change one line in `.env` — zero code changes:
+Change one line in `.env` - zero code changes:
 
 ```bash
 # LLM: Switch between Gemini (free) and Claude (paid)
@@ -275,11 +275,11 @@ pytest tests/test_cache.py -v        # Caching module
 
 ## 🔮 What I'd Add Next
 
-- **Streaming responses** — stream LLM output token-by-token for better UX
-- **PDF table extraction** — handle structured tables in legal documents
-- **LLM-as-Judge evaluation** — more accurate faithfulness scoring
-- **Docker deployment** — containerized for cloud deployment
-- **User authentication** — multi-tenant with separate document stores
+- **Streaming responses** - stream LLM output token-by-token for better UX
+- **PDF table extraction** - handle structured tables in legal documents
+- **LLM-as-Judge evaluation** - more accurate faithfulness scoring
+- **Docker deployment** - containerized for cloud deployment
+- **User authentication** - multi-tenant with separate document stores
 
 ---
 
@@ -287,12 +287,12 @@ pytest tests/test_cache.py -v        # Caching module
 
 This project taught me the full RAG pipeline end-to-end:
 
-- **Embeddings & vector search** — how text becomes searchable numbers
-- **Hybrid retrieval** — why combining semantic + keyword search outperforms either alone
-- **Prompt engineering** — constraining LLMs to only use provided context
-- **Provider abstraction** — factory pattern for swappable backends
-- **Evaluation methodology** — measuring RAG quality beyond "does it look right?"
-- **Caching strategy** — when to cache, when to invalidate, TTL design
+- **Embeddings & vector search** - how text becomes searchable numbers
+- **Hybrid retrieval** - why combining semantic + keyword search outperforms either alone
+- **Prompt engineering** - constraining LLMs to only use provided context
+- **Provider abstraction** - factory pattern for swappable backends
+- **Evaluation methodology** - measuring RAG quality beyond "does it look right?"
+- **Caching strategy** - when to cache, when to invalidate, TTL design
 
 ---
 
